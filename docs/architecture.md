@@ -8,8 +8,8 @@ that ticket's resolution holds the rationale and the rejected alternatives.
 Vocabulary is `CONTEXT.md`. Watcher, driver, participant, seam, hook, session,
 turn, event and tool call mean what it says there and nothing else.
 
-How Fiber is started, and the commands a driver may send, is
-`docs/invocation.md`.
+How Fiber is started, the commands a driver may send, and which process runs
+what are `docs/invocation.md`.
 
 ## Three kinds of participant
 
@@ -33,10 +33,10 @@ entire surface is the three seams below.
 **The terminal is a watcher and a driver, never a participant.** When the loop
 needs an answer from a human it emits a request and waits for a reply
 command. The terminal is one possible answerer; a calling harness is another,
-answering identically. This follows from `docs/events.md`: "The TUI consumes
-the same event stream in-process and holds no private path to state; anything
-it renders exists in this contract, as an ephemeral event where it is
-display-only."
+answering identically. This follows from `docs/events.md`: the TUI "reads the
+same event stream from the session's socket (`docs/invocation.md`,
+"Processes"), so it holds no private path to state; anything it renders exists
+in this contract, as an ephemeral event where it is display-only."
 
 ## The modules
 
@@ -48,7 +48,7 @@ display-only."
 | `provider` | Talks to model APIs: wire formats, credentials, streaming. Reached only through the provider seam. |
 | `tools` | Runs tool calls: shell, file edits, search. Reached only through the tool seam. |
 | `extensions` | Loads extension code, hosts the runtime, and wires what extensions register into the three seams. |
-| `tui` | Draws the terminal. Watches events, sends commands, knows nothing else. |
+| `tui` | Draws the terminal, in its own process, as a client of a session's socket. Watches events, sends commands, knows nothing else. |
 | `config` | Reads the configuration files in [Fiber home](state.md). Answers questions; never asks any. |
 | `doors` | The non-interactive front door: argv or stdin in, JSON lines out. Which doors exist and what a driver may send them is `docs/invocation.md`; this page only fixes that a door sits beside the TUI with no privilege the TUI lacks. |
 | `main` | The composition root. Parses argv, builds everything once, picks a door. No feature logic. |
@@ -167,11 +167,19 @@ Fiber uses blocking threads and no async runtime.
 
 | Thread | Owns | Lives |
 |---|---|---|
-| loop | the turn: what happens next, and every durable event | the process |
-| terminal input | the keyboard | the process, when a terminal is attached |
-| terminal render | the screen | the process, when a terminal is attached |
-| driver input | a door's stdin | the process, on a non-interactive door |
+| loop | the turn: what happens next, and every durable event | the session |
+| driver input | a door's stdin | the process, when started with a stdin driver |
+| one per socket client | that client's connection: its commands in, its events out | the connection |
 | one per running tool call | that call's subprocess and its output | the call |
+
+A session process runs a tree: the root session and its delegates. Each
+delegate has its own loop thread, its own inbox and its own tool-call
+threads, in the same process (`docs/delegates.md`).
+
+The terminal runs in a separate process (`docs/invocation.md`,
+"Processes") with two threads of its own: terminal input, which owns the
+keyboard, and terminal render, which owns the screen. Neither is in the
+session's process.
 
 `log` is not a thread. It is a shared object behind a lock: whoever emits an
 event calls it, and it mints `seq`, writes, fsyncs and fans out.
@@ -262,14 +270,16 @@ turn's input rather than being dropped.
 
 ### Both front doors
 
-The threading is identical on the non-interactive door, as map premise 6
-requires. The render and terminal-input threads are replaced by a stdin reader
-that is a driver and a stdout writer that is a watcher; the loop, the inbox,
-the streaming, the cancellation and the tool-call scheduling are the same code.
+The threading is identical on both doors, as map premise 6 requires. The
+terminal is a client of a `fiber serve` session, so every session process is
+the same program: a stdin reader when started with a stdin driver, a thread per
+socket client, and the loop, the inbox, the streaming, the cancellation and the
+tool-call scheduling as above.
 A door has no privilege the terminal lacks, and neither has a path to state
 that the other does not.
 
 ## Not settled here
+
 
 - The extension runtime: [Extension runtime: Lua or something else?](https://github.com/aakshintala/fiber/issues/11)
 - Confinement: [Does Fiber confine what tools can touch?](https://github.com/aakshintala/fiber/issues/30)

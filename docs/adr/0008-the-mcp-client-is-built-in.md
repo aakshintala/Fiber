@@ -41,9 +41,8 @@ tool, deferred by default where the protocol supports deferral.
 - A server can start at session start, keep a child process with pipes open,
   hold a streaming HTTP connection and ask the person a question during a call.
   None of this is a host capability an extension gets.
-- Where servers run is a question for
-  [Process architecture: core, TUI and shared services](https://github.com/aakshintala/fiber/issues/81)
-  alone. It does not depend on
+- Where servers run is [ADR 0009](0009-each-session-tree-is-one-process.md)'s:
+  the root's process owns a session tree's servers. It does not depend on
   [where extension state lives](https://github.com/aakshintala/fiber/issues/39).
 - MCP tools declare effects per tool, from hints, which is weaker than an
   extension's per-call effects function (`docs/mcp.md`, "Effects").

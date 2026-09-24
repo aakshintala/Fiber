@@ -63,10 +63,10 @@ A Fiber delegate's lines are relayed onto its parent's stdout as they are, each
 carrying the delegate's `session_id`, so filtering by `session_id` still gives
 the parent's log (`docs/delegates.md`, "One stream").
 
-In an attended run stdout is the terminal, so that equality binds the
-non-interactive door only. The TUI consumes the same event stream in-process and
-holds no private path to state; anything it renders exists in this contract, as
-an ephemeral event where it is display-only.
+The TUI is a separate process that reads the same event stream from the
+session's socket (`docs/invocation.md`, "Processes"), so it holds no private
+path to state; anything it renders exists in this contract, as an ephemeral
+event where it is display-only.
 
 ## Identity and ordering
 

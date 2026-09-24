@@ -15,6 +15,7 @@ Default `~/.fiber` on macOS and Linux; `FIBER_HOME` relocates all of it.
   extensions/<name>/              installed extensions, one directory each
   approvals/<content-hash>        one file per approved extension content
   credentials/<provider>          one file per provider, mode 0600
+  run/<session_id>                one local socket per running session
   cache/models/<provider>.json    discovered model list
 ```
 
@@ -123,6 +124,16 @@ provider's discovered model list, one file per provider at
 **Worktrees.** Per project, `worktrees/<id>/`: the git worktree of a delegate
 started with `isolation: worktree`. When one is removed or kept is
 `docs/delegates.md` ("Worktrees").
+
+**Sockets.** `run/<session_id>` is the local socket of a running session
+(`docs/invocation.md`, "Processes"), mode 0600 in a 0700 directory. It exists
+while the session's process runs; a socket left by a process that died is
+stale, and whoever finds it removes it. It sits at the top of Fiber home
+because macOS limits a socket's path to 103 bytes (`sun_path[104]` in
+`sys/un.h`; binding at 104 fails, probed on Darwin 25.6.0), and a path under
+`projects/<key>/sessions/<id>/` exceeds that. Linux allows 107 (`unix(7)`, not
+measured here). A `FIBER_HOME` long enough to break the limit is a startup
+error naming the variable.
 
 **Prompt history.** Per project, `history.jsonl`: one JSON line per prompt,
 append-only. Up-arrow recalls prompts typed anywhere in that project.

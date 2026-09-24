@@ -204,10 +204,22 @@ Fiber asks each field in turn:
 | enum | select |
 | string, number or integer | text input |
 
-When nobody can answer, Fiber declines, which is a response MCP defines. A
-headless run with no driver attached is that case. An elicitation from a
-delegate is relayed up the tree like a delegate's escalation
-(`docs/permissions.md`, "Delegates").
+When no answer is possible, Fiber declines, which is a response MCP defines.
+That is the same case as an escalation's block (`docs/permissions.md`,
+"Headless"): a session started by `fiber ask`, or one that has been sent
+`close`. Otherwise a pending elicitation waits for a client, as any
+interaction does. An elicitation from a delegate is relayed up the tree like a
+delegate's escalation (`docs/permissions.md`, "Delegates").
+
+On stdio, an elicitation carries nothing that links it to the call that raised
+it: the MCP TypeScript SDK 1.29.0 passes `relatedRequestId` to its transport
+(`shared/protocol.js:337`), and the stdio transport's `send(message)` drops it
+(`server/stdio.js:63`). A tree's sessions share its servers ("Where servers
+run"), so when a server with calls in flight from more than one session
+elicits, Fiber cannot tell whose call raised it. Then the elicitation goes to
+whoever drives the root, labelled with the server's name, and the root's log
+records it with the `action_id` of every call in flight on that server. With
+one session's calls in flight, it is that session's.
 
 Fiber does not advertise sampling and does not answer a sampling request.
 Neither codex nor Claude Code advertises it.
@@ -252,24 +264,26 @@ Each server has:
 
 The file format belongs to Configuration, which is not yet specified.
 
-## What process architecture must respect
+## Where servers run
 
-Which process hosts the servers is settled by
-[Process architecture: core, TUI and shared services](https://github.com/aakshintala/fiber/issues/81).
-This design puts four constraints on it:
+A session tree is one process ([ADR 0009](adr/0009-each-session-tree-is-one-process.md)),
+and the root's process owns the tree's servers. Every delegate in the tree
+calls them there. Separate trees share none: each top-level session starts its
+own.
 
-- The tool set is fixed per session. Only reload changes it.
-- A server whose behavior depends on the folder it started in can only be
-  shared by sessions in the same workspace. The owner's cursor-delegate server
-  is one.
-- An elicitation must reach the session whose call raised it.
+- The tool set is still fixed per session. A delegate's first request declares
+  the tree's server tools as they are then.
+- A server whose behavior depends on the folder it started in serves every
+  session in the tree, including a delegate in a worktree, as the root started
+  it. A call that names no path acts in the root's workspace, not the
+  delegate's. The owner's cursor-delegate server is one: a call works
+  in the server's own directory unless it passes `isolation: CallerProvided`
+  with a path.
 - Each of the owner's servers takes 43 to 93 MiB
-  (`research/delegate-memory/README.md`, "MCP servers").
+  (`research/delegate-memory/README.md`, "MCP servers"), once per tree.
 
 ## Not settled here
 
-- Which process hosts servers:
-  [Process architecture: core, TUI and shared services](https://github.com/aakshintala/fiber/issues/81)
 - How each protocol defers tools:
   [Prompt cache](https://github.com/aakshintala/fiber/issues/33)
 - How a person invokes a prompt template
