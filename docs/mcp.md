@@ -1,8 +1,7 @@
 # MCP
 
 How Fiber uses MCP servers: what it starts, what the model sees, how a call is
-judged, and what happens when a server fails. This is what is true now, not a
-plan. It is settled by
+judged, and what happens when a server fails. It is settled by
 [MCP client](https://github.com/aakshintala/fiber/issues/22); the reasoning and
 the rejected alternatives are
 [ADR 0008](adr/0008-the-mcp-client-is-built-in.md). What pi, codex and Claude
@@ -44,9 +43,10 @@ registering an existing name replaces it, and the replacement is recorded in the
 session log. An extension can replace any MCP tool, or `mcp_resources`, by
 registering its name.
 
-The tool set is fixed at the session's first request. Tools are sorted by name,
-and only [reload](#reload) changes the set. Changing tool definitions
-mid-session misses the whole prompt cache.
+The tool set is fixed at the session's first request. A resumed session lists
+its servers' tools again and fixes its tool set at its own first request. Tools
+are sorted by name, and only [reload](#reload) changes the set. Changing tool
+definitions mid-session misses the whole prompt cache.
 
 ### Deferred tools
 
@@ -117,9 +117,11 @@ Each call has a timeout, 10 minutes by default, the same as the shell's
 server. A call that times out ends `failed` with code `timeout`.
 
 Cancelling a turn sends MCP's `notifications/cancelled` for each call in
-flight, and the call completes as `cancelled`. Fiber cannot stop a server's
-work, only ask. So an MCP call marked `cancelled` means Fiber asked the server
-to stop and stopped waiting, not that the server's work has stopped.
+flight and stops waiting. The call ends `failed` with code
+`mcp_cancel_requested`: Fiber asked the server to stop, and the server may still
+act. MCP says a server receiving that notice should not respond, so Fiber never
+learns whether the server stopped, and the call is never `cancelled`
+(`docs/tools.md`, "Cancellation").
 
 A result goes through the tool contract in `docs/tools.md`:
 
@@ -231,6 +233,7 @@ different code later under the same approval.
 |---|---|
 | `mcp_server_unavailable` | a call to a server that failed to start or died |
 | `mcp_tool_removed` | a call to a tool the server has since removed |
+| `mcp_cancel_requested` | a cancelled turn asked the server to stop a call, and the server may still act |
 | `mcp_required_server_failed` | a server marked `required` failed to start |
 | `mcp_server_unapproved` | a repository declares a server nobody has approved |
 

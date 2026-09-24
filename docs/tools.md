@@ -115,6 +115,8 @@ between chunks of work. The loop writes `tool_call_completed` with
 `status: cancelled` only after the tool has returned, so the log never calls a
 call cancelled while it can still change something. The one wait it cannot cut
 short is a read blocked in the kernel, such as on a hung network filesystem.
+The second is an MCP call, which Fiber can only ask to stop: it ends `failed`
+with code `mcp_cancel_requested`, never `cancelled` (`docs/mcp.md`, "Calls").
 
 ## Shell
 
