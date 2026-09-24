@@ -115,6 +115,8 @@ between chunks of work. The loop writes `tool_call_completed` with
 `status: cancelled` only after the tool has returned, so the log never calls a
 call cancelled while it can still change something. The one wait it cannot cut
 short is a read blocked in the kernel, such as on a hung network filesystem.
+The second is an MCP call, which Fiber can only ask to stop: it ends `failed`
+with code `mcp_cancel_requested`, never `cancelled` (`docs/mcp.md`, "Calls").
 
 ## Shell
 
@@ -377,6 +379,11 @@ The default tool set therefore never needs a Lua VM, and a headless run never
 fails with `extension_missing` for one of them.
 Built-ins register through the tool seam exactly as an extension does and can be
 replaced by name (`docs/architecture.md`, "Tool seam").
+
+The MCP client is compiled in too. Each tool an MCP server offers registers
+through the tool seam as `mcp__<server>__<tool>` and can be replaced by name
+like any built-in. How MCP tools are named, declare effects and fail is
+`docs/mcp.md`.
 
 Four kinds ship as extensions:
 

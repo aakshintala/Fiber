@@ -54,8 +54,9 @@ no tty required, no terminal escape codes on stdout, the session id on the
 first line, a documented and versioned event stream, stable exit codes, and a
 workspace path it runs in rather than creates.
 
-Whether Fiber is an MCP *client*, consuming tool servers, is untouched by this
-and remains [#22](https://github.com/aakshintala/fiber/issues/22)'s.
+Fiber is an MCP client, consuming tool servers, and that client is built in
+([ADR 0008](0008-the-mcp-client-is-built-in.md)). This decision is only about
+serving.
 
 ## Why
 
@@ -112,9 +113,9 @@ cost.
 
 **A stateless `fiber mcp`** answering every call by reading the same session
 directories the CLI reads. This does not violate premise 4 the way a registry
-would, and if [#22](https://github.com/aakshintala/fiber/issues/22) puts an MCP
-client in v0.0.1 the protocol and framing are already in the binary, making the
-server half small. Rejected because it closes the discoverability gap for one
+would, and the MCP client is built in
+([ADR 0008](0008-the-mcp-client-is-built-in.md)), so the protocol and framing
+are already in the binary, making the server half small. Rejected because it closes the discoverability gap for one
 agent where the wrapper closes it for both, and because premise 1 rules out
 what is wanted eventually but not needed to start using Fiber daily.
 

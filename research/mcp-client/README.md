@@ -1,0 +1,92 @@
+# How three coding-agent harnesses consume MCP tool servers
+
+How pi, codex and Claude Code consume MCP servers, probed from primary sources.
+The startup timing at the end was measured with `mcp_start.py` in this folder.
+
+Sources probed (all primary, no recall):
+- **pi core**: `badlogic/pi-mono` shallow clone at `.../scratchpad/research/pi-mono` (packages/coding-agent, packages/agent). Installed binary: `@earendil-works/pi-coding-agent@0.87.1` at `/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent` (dist bundle + chunks).
+- **pi's actual MCP implementation**: `pi-mcp-adapter@2.37.0` (third-party npm package, author nicobailon, not badlogic) — unpacked source at `.../scratchpad/research/pi-mcp-adapter/package` via `npm pack`.
+- **codex**: `openai/codex` codex-rs sparse checkout at `.../research/codex/codex-rs` (crates: `config`, `codex-mcp`, `rmcp-client`, `core`, `tools`, `connectors`).
+- **Claude Code**: `strings` dump of the installed binary at `.../scratchpad/monitor-probe/claude-strings.txt` (50MB), searched with a Python scanner (grep chokes on the long lines).
+
+**Headline finding**: pi core (badlogic/pi-mono) has **zero MCP support of its own**. There is no MCP-named file/dir anywhere in the OSS repo. The only in-repo trace is a test fixture referencing a hypothetical package name `"npm:pi-mcp-adapter"` (`packages/coding-agent/test/settings-manager-bug.test.ts:45`). MCP support for pi is entirely delegated to an installable, third-party extension package (`pi-mcp-adapter`, by a different maintainer than pi itself), loaded via pi's generic `packages` extension mechanism (`~/.pi/agent/settings.json` → `"packages": [...]`).
+
+---
+
+## Q1 — Permissions / effects (readOnlyHint / destructiveHint / openWorldHint, per-tool allow rules)
+
+| Harness | Finding | Evidence |
+|---|---|---|
+| **pi core** | N/A — no MCP client to have a permission model for. | absence confirmed across `pi-mono` and installed dist (see header). |
+| **pi-mcp-adapter** | Does **not** read `readOnlyHint`/`destructiveHint`/`openWorldHint` at all (`grep` for these terms across the whole package: zero hits). Instead it exposes **one unified `mcp` proxy tool** to the model, not per-tool. Approval is a per-**server** consent gate (not per-tool, not hint-based): `ConsentError(serverName, {requiresApproval:true})`. Sampling additionally has an `autoApprove` boolean plus a UI confirm. | `pi-mcp-adapter/package/tool-registrar.ts:1-3` ("NOTE: Tools are NOT registered with Pi - only the unified `mcp` proxy tool is registered. This keeps the LLM context small (1 tool instead of 100s)."); `consent-manager.ts:63`; `sampling-handler.ts:19,61,84,162`. |
+| **codex** | Yes — explicit, code-level use of all three hints, feeding a 4-mode policy (`AppToolApproval::{Auto,Prompt,Writes,Approve}`), configurable per-server (`default_tools_approval_mode`) and per-tool via `enabled_tools`/`disabled_tools` allow/deny lists. | `core/src/mcp_tool_call.rs:2436-2467` — `requires_mcp_tool_approval()`: `destructive_hint==Some(true)` → require approval; else if `read_only_hint` → no approval; else falls back to requiring approval (`destructive_hint.unwrap_or(true) \|\| open_world_hint.unwrap_or(true)`). `requires_mcp_tool_approval_for_mode()` matches `Auto` (hint-based) / `Prompt` (always) / `Writes` (require unless `read_only_hint`) / `Approve` (never). Config fields: `config/src/mcp_types.rs:264` (`default_tools_approval_mode`), `:267` (`enabled_tools`), `:270` (`disabled_tools`), `:260` (`required`), `:257` (`startup_timeout_sec`/`tool_timeout_sec`). |
+| **Claude Code** | Yes — reads `annotations.readOnlyHint`/`destructiveHint` per tool (default `readOnly=false`, `destructive=true` when absent), merged with a hard-coded table of known-tool hints, and records into a hints registry used for approval. Permission rules address individual tools/servers by the `mcp__server__tool` name pattern. | strings offset 42357026: `_=c.annotations?.readOnlyHint??i?.readOnly??!1,w=c.annotations?.destructiveHint??i?.destructive??!0; ... t.record(c.name,{readOnly:_,destructive:w})`; permission rule regex at offset 5696924: ``^mcp__[\w-]+(?:__(?:[\w.-]+\|\*))?$`` (matches `permissions.allow`/`.deny`/`.ask` entries like `mcp__server__tool` or `mcp__server__*`). |
+
+## Q2 — Naming (prefix, collisions, length limits)
+
+| Harness | Finding | Evidence |
+|---|---|---|
+| **pi-mcp-adapter** | No per-tool naming at all — see Q1; the model only ever sees one literal tool named `mcp`. No collision/length problem exists by construction. | `tool-registrar.ts:1-3`. |
+| **codex** | `mcp__<server>__<tool>` (prefix `"mcp"`, delimiter `"__"`), sanitized for the Responses API. Max name length **128 chars**. Names that would exceed it are truncated and a **12-hex-char SHA1 suffix** (`_<hash>`) is appended for uniqueness; truncation prefers shrinking the tool name first, then the namespace if needed. | `codex-mcp/src/mcp/mod.rs:66-68,83-86` (`MCP_TOOL_NAME_PREFIX="mcp"`, `MCP_TOOL_NAME_DELIMITER="__"`, `qualified_mcp_tool_name_prefix`); `codex-mcp/src/tools.rs:225-298` (`MAX_TOOL_NAME_LENGTH=128`, `CALLABLE_NAME_HASH_LEN=12`, `sha1_hex`, `callable_name_hash_suffix`, `fit_callable_parts_with_hash`, `unique_callable_parts` using a `used_names: HashSet<String>`). |
+| **Claude Code** | Same convention: `mcp__<server>__<toolName>`, confirmed both for local MCP servers and for claude.ai connectors. Permission-rule regex (Q1) is exactly this shape. | strings offset 6162635/6162731: "their tools appear in your tool list as `mcp__<id>__<toolName>`" / "`mcp__<connector>__<toolName>`"; regex at 5696924. |
+
+## Q3 — Lifecycle (startup, timeout, fatal/non-fatal, mid-session death, reconnect, list_changed)
+
+| Harness | Finding | Evidence |
+|---|---|---|
+| **pi-mcp-adapter** | Subscribes to `tools/list_changed`, `prompts/list_changed`, `resources/list_changed` and refreshes on each, logging (not crashing) on refresh failure. Supports stdio + SSE + streamable-HTTP with automatic streamable-HTTP→SSE fallback. | `server-manager.ts:694-696` (capability negotiation `toolsListChanged`/`promptsListChanged`/`resourcesListChanged`), `:1414/1433/1452` (`"MCP: tools/list_changed refresh failed for ${serverName}"` etc.), `:1731-1732` (streamable-http→sse fallback on `shouldFallbackToSse`). |
+| **codex** | Per-server config: `enabled`, `required` (if `true`, `codex exec` **exits with an error** on failed init — fatal; otherwise non-fatal, just unavailable), `startup_timeout_sec` (default **30s**, `DEFAULT_STARTUP_TIMEOUT`). A "startup grace" window lets the initial turn's tool catalog simply omit a still-pending optional server's tools rather than block (non-fatal degradation); a required server or a zero-grace config instead waits/enforces the timeout. | `config/src/mcp_types.rs:229-231` (`required` doc: "`codex exec` exits with an error if this MCP server fails to initialize"), `:254` (`startup_timeout_sec`); `codex-mcp/src/rmcp_client.rs:103` (`DEFAULT_STARTUP_TIMEOUT: Duration = Duration::from_secs(30)`); `core/tests/suite/mcp_optional_startup_grace.rs:1-40` (scenarios: `ShortGraceOmitsPending`, `DisabledGraceWaitsForStartup`, etc.). |
+| **Claude Code** | Non-fatal by default: failed-to-connect servers are logged and skipped ("Note: these configured MCP servers failed to connect, so their tools are unavailable for this session"). Mid-session server death removes its tools and injects a system note ("MCP server disconnected"); a deferred-tool resume that targets a since-dead server logs a warn and treats it as unavailable rather than erroring the turn. Servers can be waited-on explicitly (a `wait_for_mcp_servers`-style tool: "waited=…ms connected=… cached=… needsAuth=… disabled=… unconfigured=… unknown=…"). Handles `tools/list_changed`, `prompts/list_changed`, `resources/list_changed`, refetches, and on stream-reopen with no notification still "synthesizes" a refetch. Timeouts: `MCP_TIMEOUT` (default **30000ms**, env-overridable, clamped to i32 max) governs discovery/connect; `MCP_CONNECT_TIMEOUT_MS` defaults to **5000ms**; `MCP_TOOL_TIMEOUT` is the default per-call timeout, overridable per-server. | strings 8479539 (surfacing failed servers to the model); 22773194/22773294 ("MCP server disconnected" system note); 35321926 (deferred-tool resume warns "MCP server disconnected or tool removed"); 5977513-5978373 (list_changed handlers for tools/prompts/resources + reopen-without-notification refetch); 18885502 (`function Nc(){let n=a.MCP_TIMEOUT;return n&&n>0?Math.min(n,2147483647):30000}` and `MCP_CONNECT_TIMEOUT_MS` default 5000). |
+
+## Q4 — Tool list in the prompt (sorted? deferred/lazy loading?)
+
+| Harness | Finding | Evidence |
+|---|---|---|
+| **pi-mcp-adapter** | Not applicable in the usual sense — only one tool (`mcp`) is ever registered, so the "list" is a single entry by design; the underlying per-server tool catalog is fetched lazily inside the proxy tool's own execution, not pre-loaded into the prompt. | `tool-registrar.ts:1-3`. |
+| **codex** | Has its own general-purpose, BM25-search-based `tool_search` mechanism (crate `codex-tools`, handler `core/src/tools/handlers/tool_search.rs`) functionally analogous to Claude Code's ToolSearch. MCP tools participate directly: each gets a `callable_namespace` explicitly documented as "used for deferred tool loading." No evidence found of the tool *list* being alphabetically sorted before prompt injection (only a `required_servers.sort()` for an internal ordering concern was found, not the tool list itself). | `codex-mcp/src/tools.rs:37` ("Model-visible namespace used for deferred tool loading"); `tools/src/tool_search.rs:64` ("shared MCP specs normalize only when selected"); `core/src/tools/handlers/tool_search.rs:1-30` (BM25 `SearchEngine`, `LoadableToolSpec`, `ToolSearchInfo`); `codex-mcp/src/connection_manager.rs:251` (`required_servers.sort()`, unrelated to tool ordering). |
+| **Claude Code** | Explicit deferred-loading feature gated by `ENABLE_TOOL_SEARCH`: "Default: tools are deferred when tool search is enabled." A per-server override forces eager inclusion (`defer_loading: false` equivalent) at the cost of blocking startup until the server connects. Related telemetry: `tengu_deferred_stub_tool`, `defer_loading_changed`, `tool_deferred_unavailable`/`tool_deferred` stop reasons. | strings 9721914/13707458 ("When true, all tools from this server are always included in the prompt and never deferred behind tool search. Equivalent to setting `defer_loading: false` on the API. Default: tools are deferred when tool search is enabled. As a side effect this also blocks startup until the server is connected"); 8173287/8210856 (`defer_loading_changed`); 8361190 (`tengu_deferred_stub_tool`, `defer_loading`); 13696187/13696593 (`tool_deferred_unavailable`). |
+
+## Q5 — Elicitation & sampling (who answers: user prompt vs auto-decline)
+
+| Harness | Finding | Evidence |
+|---|---|---|
+| **pi-mcp-adapter** | Both implemented for real: `elicitation-handler.ts` registers `setRequestHandler("elicitation/create", ...)`; `sampling-handler.ts` registers `setRequestHandler("sampling/createMessage", ...)` with an `autoApprove` config flag plus an explicit UI `confirm()` step when not auto-approved. | `elicitation-handler.ts:32`; `sampling-handler.ts:14,19,61,84,162` (`confirmSampling`). |
+| **codex** | **Elicitation**: fully implemented and user-facing — surfaced as a Codex protocol `Event`/`EventMsg`, resolvable via a stored responder, with a policy layer that can auto-approve or force-decline (`STRICT_AUTO_REVIEW_DECLINE_MESSAGE`). **Sampling**: advertised capability is left unset (`ClientCapabilities::default()` — only `capabilities.elicitation` is set; `sampling` and `roots` are never touched), so codex does not support MCP sampling; the only "sampling" references outside of that are in test-input-parsing scaffolding, not a production handler. | `codex-mcp/src/elicitation.rs:1-7` (module doc) and its `capabilityNotSupportedError`/event flow; `codex-mcp/src/rmcp_client.rs:1096-1118` (`mcp_initialize_request_params`: `capabilities.elicitation = Some(...)`, nothing else set). |
+| **Claude Code** | **Elicitation**: real, handled per-session — `handleElicitation()` shows the request to the user (telemetry `tengu_mcp_elicitation_shown`) unless the host/mode can't answer (`if(!this.hostAnswersElicitations)return{action:"cancel"}` — e.g. headless/print mode auto-cancels: "Elicitation request received in print mode"). **Sampling**: capability is **not** advertised at all — the client's declared MCP capabilities are exactly `{roots:{listChanged:true}, elicitation:{}}` (no `sampling` key), so any server request for `sampling/createMessage` fails the client-side capability assertion ("Client does not support sampling"). | strings 34825605 (`handleElicitation` gate on `hostAnswersElicitations`); 10372281/35290191 ("Elicitation request received in print mode", `tengu_mcp_elicitation_shown`); 19370432 (`function mln(){return{roots:{listChanged:!0},elicitation:{},...}}` — the actual advertised capabilities); 28789363-28789637 (`assertCapabilityForMethod`: throws for `sampling/createMessage` if `!this._clientCapabilities?.sampling`). |
+
+## Q6 — Transports & OAuth
+
+| Harness | Finding | Evidence |
+|---|---|---|
+| **pi-mcp-adapter** | stdio, SSE, and streamable-HTTP, with auto-fallback streamable-HTTP→SSE; full OAuth module (`oauth.ts`, `mcp-auth.ts`, `mcp-bearer-store.ts`). | `server-manager.ts:1069` (`StdioClientTransport`), `:1624-1654` (`kind: "streamable-http" \| "sse"`, `StreamableHTTPClientTransport`/`SSEClientTransport`), `:1731` (fallback); `mcp-auth.ts:366` (OAuth credential file permission check). |
+| **codex** | Config-level transport enum has exactly two variants — `Stdio` (command/args/env/cwd) and `StreamableHttp` (url + bearer-token-env-var + custom headers + a headers-helper shell command). Legacy SSE was not found as a distinct configured transport variant (only test scaffolding referencing an unrelated `"server/discover"` SSE-shaped test helper). OAuth is a first-class, heavily-built-out subsystem: dynamic client registration, enterprise IdP token exchange ("EMA"), refresh, login/logout flows, `WWW-Authenticate` parsing. | `config/src/mcp_types.rs:564-596` (`enum McpServerTransportConfig { Stdio{...}, StreamableHttp{...} }`); `rmcp-client/src/oauth*.rs`, `oauth_client_registration.rs`, `enterprise_oauth_login.rs`, `www_authenticate.rs` (file listing above). |
+| **Claude Code** | All of stdio, `sse` (legacy), `http` (streamable), plus `ws`/`sse-ide`/`ws-ide` (IDE-integration-only) and `sdk` (in-process, host-registered) transport kinds are recognized server types. OAuth is a full per-server config object (`oauth`, `oauth.scope`) with dynamic discovery (`resource_metadata`, `WWW-Authenticate`, `jwks_uri`). | strings 12414407 (`Gh=p(()=>V(["stdio","sse","sse-ide","http","ws","sdk"]))`); 12415431 (per-server schema incl. `oauth:Jo().optional()`); 7564700/7567574 (OAuth discovery machinery). |
+
+## Q7 — Roots (advertised? value?)
+
+| Harness | Finding | Evidence |
+|---|---|---|
+| **pi-mcp-adapter** | Advertises the `roots` capability in its own server-side task-input dispatcher but the actual handler returns an **empty list**, not cwd. | `mcp-tasks.ts:358`: `roots: async () => ({ roots: [] })`. |
+| **codex** | Does **not** advertise `roots` at all — same `ClientCapabilities::default()` call that leaves `sampling` unset also leaves `roots` unset (only `elicitation` is populated). A `ListRootsRequest` variant exists only in test/mock input-parsing code, not in any production handler. | `codex-mcp/src/rmcp_client.rs:1096-1118`; `rmcp-client/src/tool_input.rs:174` (test-only). |
+| **Claude Code** | Does advertise it: `roots:{listChanged:true}` is part of the literal capabilities object sent on every MCP client connection (alongside `elicitation:{}`, with a feature-gated, currently-disabled `tasks.requests.elicitation` extension). Could not confirm the exact root value returned when a server calls `roots/list` (found the response builder's name, `getRootsListResponse`, but not its body in the strings dump — likely the workspace/cwd, consistent with the schema requiring `uri` to start with `file://`, but not directly proven). | strings 19370432 (`function mln(){return{roots:{listChanged:!0},elicitation:{},...}}`); 5543171/44553829 (`getRootsListResponse` exported symbol, body not located). |
+
+---
+
+## Surprises worth flagging
+
+1. **pi core has no MCP support of any kind.** All the evidence (repo search, installed-binary strings, dependency graph) says MCP arrives only through a third-party extension (`pi-mcp-adapter`, a different author than badlogic). This directly answers the task's built-in "also check whether pi core has MCP at all" — it does not.
+2. **pi-mcp-adapter deliberately does not expose individual MCP tools to the model at all** — it collapses every server's tools behind a single `mcp` proxy tool "to keep the LLM context small (1 tool instead of 100s)." This is a fundamentally different naming/permission architecture from codex and Claude Code, which both use the same `mcp__<server>__<tool>` scheme.
+3. **codex and Claude Code converged on an almost identical MCP client design** independently: same tool-name prefix/delimiter (`mcp__…__…`), same three-hint (`readOnlyHint`/`destructiveHint`/`openWorldHint`) approval logic, same deferred/lazy tool-loading concept, same non-fatal-by-default server-death handling with a "reload/wait" affordance, and — most surprisingly — **both advertise elicitation but explicitly do NOT advertise MCP sampling** to servers (verified directly from the `ClientCapabilities` construction site in codex, and from the literal capabilities object in Claude Code). Any MCP server that assumes a coding-agent client will honor `sampling/createMessage` will fail against either of the two major agentic CLIs.
+4. Claude Code advertises `roots:{listChanged:true}` while codex advertises no `roots` capability at all — a real, code-verified asymmetry between the two most similar harnesses.
+
+## Startup timing
+
+`mcp_start.py` launched each of the owner's three local servers over stdio,
+sent `initialize`, `notifications/initialized` and `tools/list`, and timed
+launch to the `tools/list` reply. Five runs each, macOS arm64.
+
+| Server | Tools | Median | Max |
+|---|---|---|---|
+| quotabar | 1 | 93 ms | 130 ms |
+| cursor-delegate | 8 | 82 ms | 143 ms |
+| node_repl | 4 | 105 ms | 124 ms |

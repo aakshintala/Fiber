@@ -54,6 +54,10 @@ security documentation: extensions "run with the same permissions" as the
 process, and that is outside its security boundary. Fiber's own built-in tools go through this
 seam identically.
 
+An MCP tool declares its effects from the hints its server gives, per tool
+rather than per call. How the hints map to effects is `docs/mcp.md`
+("Effects").
+
 ## Modes
 
 One mode per session, chosen by the human. **A mode is never changed by the
