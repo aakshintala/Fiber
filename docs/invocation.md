@@ -87,9 +87,11 @@ acknowledgements carry no `seq`, so they never reach the log.
 | `job_stop` | Stops a running job by `job_id`. Rejected `stale_request` if the job is not running. |
 | `background` | Moves every shell call running in the current turn to the background (`docs/tools.md`, "Shell"). Rejected `stale_request` if none is running. |
 | `reload` | Re-reads configuration, restarts changed MCP servers and extensions, and declares the tool set again (`docs/mcp.md`, "Reload"). Rejected `busy` if a turn is running. |
+| `rewind` | Starts a new session that continues a session from an earlier point (`docs/events.md`, "Rewind"), and answers with the new session's id. Takes an optional `session_id`, default this session; an optional `seq`, default the start of the latest turn; and whether to summarise. Rejected `busy` if a turn is running, `not_step_boundary` if `seq` is not a step boundary, `session_held` if another process holds the session, and `delegate_session` if it is a delegate. |
 | `close` | Accept no more prompts; finish the turn in flight, then any running jobs (`docs/tools.md`, "Background jobs"), and exit. |
 
-Rejection codes: `malformed`, `unknown_command`, `busy`, `stale_request`.
+Rejection codes: `malformed`, `unknown_command`, `busy`, `stale_request`,
+`not_step_boundary`, `session_held`, `delegate_session`.
 
 **`reply` answers all five interactions, not just approvals.**
 `docs/architecture.md` fixes the set: "v0.0.1 ships one closed, versioned set
@@ -124,6 +126,11 @@ message does to running shell calls, with nothing sent to the model. The
 terminal binds it to Ctrl+B. It never kills a command: the command becomes a
 job and keeps its timeout.
 
+**`rewind` moves the process to the new session.** From then on `fiber serve`
+drives the new session: it releases the old session's lock, takes the new
+one's, and its lines carry the new `session_id`. The old session's log is
+left as it was.
+
 **The set is a floor, not a proof.** It is what Fiber's settled semantics
 require today. An open ticket may add one — [#24](https://github.com/aakshintala/fiber/issues/24)
 if a human can force compaction, [#12](https://github.com/aakshintala/fiber/issues/12)
@@ -141,6 +148,11 @@ is a command every driver gets.
 **First line is `fiber_started`**, carrying the Fiber version, the
 `schema_version`, the `session_id`, and whether the session is new or resumed.
 Both subcommands take the same resume selector.
+
+**A rewind changes the session, not the process.** The `session_id` on the
+first line is the session the process started with. After a `rewind` the
+stream goes on with the new session's lines, beginning with its
+`session_started`, whose `forked_from` names the old session.
 
 **Stdin EOF and `close` mean the same thing: no more prompts are coming.**
 Neither cancels. Fiber finishes the turn in flight, gives the ending notice and
@@ -176,6 +188,9 @@ you have `events.jsonl`, byte for byte."
   `fiber_started` with no matching `fiber_exited` means the process died.
 - **Progress** is the ephemeral lines. They carry no `seq` and never reach the
   log.
+- **After a rewind** the stream holds two sessions' lines. Filtering by each
+  `session_id` gives each session's log, and `fiber_exited` carries the
+  session the process ended on.
 
 Two consequences for the door: **stdout carries no terminal escape codes and
 no tty is required**, because either would break that byte-for-byte equality.

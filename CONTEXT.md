@@ -84,6 +84,11 @@ A Fiber delegate whose history begins as its parent's conversation up to a
 point, shared rather than copied.
 _Avoid_: clone, branch
 
+**Rewind**:
+A new session that continues an existing one from an earlier point, sharing its
+history rather than copying it. The existing session is left as it was.
+_Avoid_: branch, backtrack, checkpoint, undo
+
 **Role**:
 A configured name for a delegate's model reference, so that written
 instructions survive a model being withdrawn.

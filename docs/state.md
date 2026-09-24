@@ -86,8 +86,9 @@ The session directory is unchanged from `docs/events.md`:
 The full output behind a bounded tool result goes in that session's
 `artifacts/`.
 
-A fork's history is a pointer into another session's log (`docs/delegates.md`,
-"Forks"). Deleting a session a fork points at deletes its forks or is refused.
+A fork's history, and a rewind's, is a pointer into another session's log
+(`docs/delegates.md`, "Forks"; `docs/events.md`, "Rewind"). Deleting a session
+a fork or a rewind points at deletes them or is refused.
 
 ## What each part holds
 

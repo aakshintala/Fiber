@@ -128,7 +128,7 @@ as soon as a delegate relays its own messages onto the same stdout.
 
 | Kind | Durable | Payload |
 |---|---|---|
-| `session_started` | yes | creation time, workspace root; optional `parent { session_id, delegate_id }` for a delegate and `forked_from { session_id, seq }` for a fork (`docs/delegates.md`) |
+| `session_started` | yes | creation time, workspace root; optional `parent { session_id, delegate_id }` for a delegate and `forked_from { session_id, seq }` for a fork or a rewind (`docs/delegates.md`, "Forks"; "Rewind" below) |
 | `turn_started` | yes | the input that started it; for a turn started by jobs, a source naming those `job_id`s |
 | `turn_completed` | yes | `outcome` (`completed`, `interrupted`, `failed`), `error` on failure |
 | `steering_applied` | yes | the text a running turn received at a step boundary, and where it came from |
@@ -298,6 +298,57 @@ ephemeral. The log does not pay to store text a completion would supersede.
 
 An attempt count is derived by counting `assistant_message_started` lines, never
 from a stored counter, so it cannot drift from the record.
+
+## Rewind
+
+A session is a line. `seq` is its only position: there is no tree, no leaf and
+no event that moves a position. The evidence is
+[research/rewind](../research/rewind/README.md).
+
+A **rewind** starts a new session that continues an existing one from an
+earlier point. A person starts one from the terminal, a driver with the
+`rewind` command (`docs/invocation.md`).
+
+- **It is a pointer.** The new session's `session_started` carries
+  `forked_from { session_id, seq }`, the pointer a fork uses
+  (`docs/delegates.md`, "Forks"), and no `parent`. No `parent` is what tells a
+  rewind from a delegate's fork. Nothing is copied, and nothing is written into
+  the old session. Listing sessions finds "A continued as B" on B's first
+  line, which listing already reads.
+- **The point is a step boundary:** the start of a turn, just after the
+  person's input, or just after a batch of tool results. Every tool call before
+  it has its result.
+- **It rewinds the conversation only.** It never restores or touches files.
+  Fiber lists, for the person and in a note to the model, the files its own
+  tools wrote after the point and the shell calls after it that may have
+  changed files: those that declared `writes` or `executes`
+  (`docs/permissions.md`, "Effects").
+- **A summary is optional.** A rewind may ask the old session's model to
+  summarise the path after the point.
+- **What the model receives, in order:** the old session's history up to the
+  point, then the summary if there is one, then Fiber's note: the files written
+  and shell calls since the point, and the jobs adopted or stopped. The first
+  request matches the old session's up to the point, so it hits the prompt
+  cache while the cache is warm.
+- **Compaction is inherited by position.** A compaction in the old session at
+  or before the point applies to the new session. One after it does not.
+- **Jobs.** A job started before the point and still running is adopted by the
+  new session. Its history shows the job starting, so it must own it; otherwise
+  a resume would mark it `orphaned`. Each job started after the point and still
+  running is listed, and the person chooses to stop it or adopt it. Stop is the
+  default. A driver answers with `reply`. Stopping is the normal job stop.
+- **What records it is open.** The summary and the note are durable, because
+  resume must rebuild what the model saw, and so is each adopted or stopped
+  job. Which kinds carry them in the new session's log is not settled here.
+- **Refusals.** Rewinding a session another process holds open is refused,
+  naming the holder: its jobs live in that process, and a session has one
+  writer. A delegate cannot be rewound; its parent forks again instead.
+
+The model does not rewind. For planned speculative work it uses
+`delegate_fork`, with `isolation: worktree` where files matter. For an
+unplanned dead end it hands off: it restarts its own context from a note it
+writes. How is
+[Compaction: when a session outgrows its context](https://github.com/aakshintala/fiber/issues/24).
 
 ## Writing
 
