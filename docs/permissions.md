@@ -88,7 +88,7 @@ exactly as in any other mode.
    `credentials/` is refused, in every mode. See [Credentials](#credentials).
 2. **A standing deny** matching this call: refused. No model call, no question.
 3. **A standing ask** matching this call: a human is asked, whatever the mode.
-4. **`readonly` mode**: anything but `reads` is refused.
+4. **`readonly` mode**: a call with any effect other than `reads` is refused.
 5. **`yolo` mode**: allowed.
 6. **A fast path** — see below: allowed, with no model call.
 7. **A session grant** matching this call: allowed.
@@ -102,7 +102,7 @@ else, because a rule that can be widened by a later layer is not a deny.
 
 Two classes of call never reach a reviewer or a person:
 
-- every call whose only effect is `reads`, and
+- every call whose only effect is `reads`, or that declares no effect, and
 - a `writes` call whose paths all sit inside the **workspace**.
 
 Everything else — shell execution, network, and any write outside the

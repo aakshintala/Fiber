@@ -99,6 +99,16 @@ A new session that continues an existing one from an earlier point, sharing its
 history rather than copying it. The existing session keeps its history.
 _Avoid_: branch, backtrack, checkpoint, undo
 
+**Handoff**:
+Restarting the model's context from a handoff note, appended to the session log
+so nothing before it is lost. Started automatically, by a person, or by a tool.
+_Avoid_: compaction, summary, collapse, reset
+
+**Handoff note**:
+The text a handoff restarts the model's context from, written by the session's
+own model.
+_Avoid_: summary
+
 **Role**:
 A configured name for a delegate's model reference, so that written
 instructions survive a model being withdrawn.

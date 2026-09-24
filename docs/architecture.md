@@ -288,4 +288,4 @@ that the other does not.
 - Background jobs are `docs/tools.md` ("Background jobs")
 - Delegates are `docs/delegates.md`
 - MCP is `docs/mcp.md`
-- Compaction: [Compaction: when a session outgrows its context](https://github.com/aakshintala/fiber/issues/24)
+- Handoff is `docs/handoff.md`

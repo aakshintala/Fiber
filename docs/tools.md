@@ -55,10 +55,14 @@ judged is `docs/permissions.md`; the events themselves are `docs/events.md`.
   opaque name and an extension can replace any tool, so no client may depend
   on one tool's `details`.
 - `artifact`: the path to the full output, present only when the result was cut.
+- `control`: instructions to the loop, absent on most results. The one field
+  defined is `handoff`, a handoff note: the loop restarts the model's context
+  from it at the step boundary (`docs/handoff.md`). Any tool may set it; the
+  loop acts on the field, never on which tool set it.
 - Images are written to the session's `artifacts/` (see `docs/state.md`) and
   referenced by path, never inlined as base64 in the log.
-- The loop reads `status`, `error.code` and the declared effects, never
-  `content` or `details`. A tool's prose cannot steer control flow.
+- The loop reads `status`, `error.code`, `control` and the declared effects,
+  never `content` or `details`. A tool's prose cannot steer control flow.
 - A `failed` status is sent to the provider as that protocol's error flag on
   the tool result.
 
@@ -84,9 +88,9 @@ by content.
 - The model reads the rest with the ordinary `read` tool on that path. There is
   no dedicated tool for it. A read of `artifacts/` has only the `reads` effect,
   so it is never reviewed.
-- There is no cap across one step's results. Overflow of the context window is
-  [Compaction: when a session outgrows its context](https://github.com/aakshintala/fiber/issues/24)'s
-  to handle.
+- There is no cap across one step's results. When they overflow the context
+  window, the overflow rule in `docs/handoff.md` ("Overflow") moves them to
+  the session's `artifacts/`.
 - In the owner's 648 pi sessions (measured 2026-09-22 with
   `research/tool-result-sizes/sizes.py`; sizes, so they do not depend on the
   platform), 16 KiB cuts 1.2% of 26,829 shell results and almost no result of
@@ -371,8 +375,8 @@ The kinds are `docs/events.md`.
 
 A first-party tool is compiled in unless its behaviour depends on a vendor or
 on the person's environment. Read, write, edit, shell, background jobs, the
-Fiber delegate harness, the task list, asking the person and web fetch behave
-the same for everyone and are compiled in, as is search if
+Fiber delegate harness, the task list, asking the person, web fetch and
+`handoff` (`docs/handoff.md`) behave the same for everyone and are compiled in, as is search if
 [Search: built-in tools or the shell?](https://github.com/aakshintala/fiber/issues/54)
 keeps it as a tool.
 The default tool set therefore never needs a Lua VM, and a headless run never

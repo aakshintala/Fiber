@@ -62,8 +62,9 @@ Models seen in pi sessions with no match in the pi-ai model registry (excluded f
 
 - Raw bytes per step: p50 554, p99 48,164, max 525,652
 - Bytes per step after cutting each result at 16,384 bytes: p50 554, p99 29,013, max 196,608
-- Max step, as estimated tokens (bytes/4) over the smallest model window seen in use (200,000): 65.7%
-- Max step, as estimated tokens over the typical (median) window seen in use (1,048,576): 12.5%
+- Max step before cutting (525,652 bytes), as estimated tokens (bytes/4) over the smallest model window seen in use (200,000): 65.7%. Fiber cuts every result, so this figure overstates what a step can add.
+- Max step after cutting (196,608 bytes, about 49,000 tokens) over the smallest window seen in use (200,000): about 25%
+- Max step before cutting, as estimated tokens over the typical (median) window seen in use (1,048,576): 12.5%
 - Steps with more than one tool result (parallel calls): 4432 of 38752 (11.4%)
 
 ## 7. pi: context-overflow errors
