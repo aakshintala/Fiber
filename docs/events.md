@@ -348,7 +348,9 @@ earlier point. A person starts one from the terminal, a driver with the
   `job_completed` go to the new session's log.
 - **The old session is closed first.** While the process still holds the old
   session's lock, it writes a `job_completed` with `status: cancelled` for each
-  job the person chose to stop, then `rewound`, naming the new session, the
+  job the person chose to stop. The summary's model call, when there is one,
+  is made on the old session, and its `usage_recorded` goes in the old
+  session's log. Then it writes `rewound`, naming the new session, the
   point and the jobs handed over. `rewound` is the last line the process writes
   to that log, and it closes the process boundary there as `fiber_exited`
   does. Only then does the new session start.
@@ -361,7 +363,7 @@ earlier point. A person starts one from the terminal, a driver with the
 The model does not rewind. For planned speculative work it uses
 `delegate_fork`, with `isolation: worktree` where files matter. For an
 unplanned dead end it hands off: it restarts its own context from a note it
-writes. How is
+writes. How a handoff works is settled in
 [Compaction: when a session outgrows its context](https://github.com/aakshintala/fiber/issues/24).
 
 ## Writing
