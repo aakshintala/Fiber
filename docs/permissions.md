@@ -201,7 +201,7 @@ questions stops reading them.
 
 **A reviewer that fails is a block, never an allow.** An unreachable provider,
 a timeout, an unparseable verdict, a missing credential: each escalates to a
-human if a client is attached to answer, and blocks if none is. There is no
+human, and blocks where no answer is possible ("Headless"). There is no
 path on this page where an error results in an action running.
 
 ## Remembering a decision
@@ -267,7 +267,7 @@ the grant is a fold of the log, like every other derived fact.
 
 ## Headless
 
-A run with no attached client defaults to `auto`. The reviewer is what stands
+A run started with no client, such as `fiber ask`, defaults to `auto`. The reviewer is what stands
 in for the person, which is the case it exists for.
 
 A calling harness that wants to answer can. `docs/architecture.md` settles that
@@ -277,8 +277,11 @@ harness driving Fiber answers exactly as the terminal does and needs no
 private channel. Claude Code makes the same distinction with
 `--permission-prompts host|none`.
 
-With no client attached and no answer possible, escalation is a block and the
-run continues under the rule above until it exhausts the block budget.
+With no answer possible, escalation is a block and the run continues under
+the rule above until it exhausts the block budget. No answer is possible in a
+session started by `fiber ask`, and in a session that has been sent `close`.
+Anywhere else, a client that leaves may come back, so a pending escalation
+waits for one (`docs/invocation.md`, "Lifecycle").
 
 ## Delegates
 
@@ -290,8 +293,8 @@ a more permissive mode than its parent.
   calls.
 - An escalation from a delegate is relayed up the tree to whoever drives the
   root session. They answer it with `reply` naming the delegate's `session_id`
-  (`docs/invocation.md`). With nobody attached, the escalation is a block, as
-  for any headless run, and the delegate carries on.
+  (`docs/invocation.md`). Where the root can get no answer, the escalation is
+  a block, as for any headless run, and the delegate carries on.
 - A model never answers a delegate's approval, the parent's model included.
   The parent's model shapes the delegate's reviewer only through the prompt it
   wrote and through `delegate_message`, which the reviewer reads as the human's

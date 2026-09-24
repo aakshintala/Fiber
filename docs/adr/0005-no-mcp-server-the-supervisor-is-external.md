@@ -76,9 +76,10 @@ parts, and the wrapper is where that logic was already proven.
 job registry in the memory of a long-lived process, and
 [#2](https://github.com/aakshintala/fiber/issues/2) records that it loses jobs
 when that process restarts. A Fiber equivalent would be a long-lived process
-holding state nothing else can see — a daemon in all but name, against premise
-4's "Single native binary, run from a terminal. No separate daemon" — or a
-second authority beside the session log, against ADR 0001.
+holding session state nothing else can see — a daemon that holds sessions,
+against [ADR 0009](0009-each-session-tree-is-one-process.md), where the only
+daemon holds none — or a second authority beside the session log, against
+ADR 0001.
 
 **The discoverability gap is real but is not Fiber's to close.** It is a
 property of the calling host, not of the agent being called. One wrapper

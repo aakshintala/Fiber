@@ -14,9 +14,12 @@ the process contract over them.
 
 | | What it is |
 |---|---|
-| `fiber` | The terminal. Requires a tty; without one it is a usage error naming `fiber serve`. |
-| `fiber serve` | The non-interactive door. Stays open. Its stdin is the driver channel: one JSON command per line. This is the door a GUI frontend, a supervising tool or a script uses. |
+| `fiber` | The terminal. Requires a tty; without one it is a usage error naming `fiber serve`. It starts a `fiber serve` session and attaches to it ("Processes"). |
+| `fiber serve` | The non-interactive door. Stays open. Its stdin is the driver channel: one JSON command per line. This is the door a GUI frontend, a supervising tool or a script uses. It also listens on a local socket, so other clients can attach. |
 | `fiber ask` | The same non-interactive door with the prompt already supplied and no further prompts accepted. Its stdin is the prompt. |
+
+`fiber remote` is not a door. It is an optional daemon that lets web and
+mobile clients reach sessions ("Remote clients").
 
 `ask` is not a second door and not a second code path. It is `serve` with its
 input already supplied and no more coming — the archived tree reached the same
@@ -155,16 +158,35 @@ first line is the session the process started with. After a `rewind` the
 stream goes on with the new session's lines, beginning with its
 `session_started`, whose `forked_from` names the old session.
 
-**Stdin EOF and `close` mean the same thing: no more prompts are coming.**
-Neither cancels. Fiber finishes the turn in flight, gives the ending notice and
-waits for any running jobs (`docs/tools.md`, "Background jobs"), then exits.
+**A session exits when it is idle and has no client.** Idle means no turn
+running and no jobs running. A client is a driver: stdin on `fiber serve`, or a
+connection to the session's socket. A client leaves by stdin EOF, by closing
+its connection, or by losing it. Leaving never cancels. When the last client
+has left, Fiber finishes the turn in flight, gives the ending notice and waits
+for any running jobs (`docs/tools.md`, "Background jobs"), then exits.
 
-One rule covers both cases that matter. A GUI frontend that dies mid-turn
-closes the pipe, and Fiber follows that same path rather than orphaning
-itself. A delegated run is spawned with its prompt supplied and stdin already
-at EOF, so it runs until the model's final answer — twenty minutes if it takes
-twenty minutes — on the same path; its caller's turn ending changes nothing,
-because the caller's turn was never holding the pipe.
+**`close` ends the session whoever else is attached.** It accepts no more
+prompts, then follows the same path.
+
+One rule covers every case that matters. A GUI frontend that dies mid-turn
+closes the pipe, and Fiber finishes rather than orphaning itself. Closing the
+terminal does the same, unless another client is still attached. A phone
+that loses its connection mid-turn loses no work. A delegated run is spawned
+with its prompt supplied and stdin already at EOF, so it runs until the
+model's final answer — twenty minutes if it takes twenty minutes — on the same
+path; its caller's turn ending changes nothing, because the caller's turn was
+never holding the pipe.
+
+There is no detach command. A session that exits is resumed from its log, so
+reattaching to one needs nothing kept running.
+
+**A pending interaction waits for a client.** An approval, an elicitation or
+any other interaction that is pending when the last client leaves stays
+pending, and the session stays alive waiting for it. The terminal and
+`fiber remote` list sessions that are waiting on a person. Two cases have no
+one to wait for, and there escalation is a block as `docs/permissions.md`
+("Headless") describes: a session started by `fiber ask`, and a session that
+has been sent `close`.
 
 **A prompt arriving mid-turn is rejected `busy` and starts nothing.** Steering
 is the mid-turn channel. Fiber holds no prompt queue that no durable event
@@ -195,6 +217,53 @@ you have `events.jsonl`, byte for byte."
 
 Two consequences for the door: **stdout carries no terminal escape codes and
 no tty is required**, because either would break that byte-for-byte equality.
+
+## Processes
+
+Settled by
+[Process architecture: core, TUI and shared services](https://github.com/aakshintala/fiber/issues/81);
+the rationale and the rejected layouts are
+[ADR 0009](adr/0009-each-session-tree-is-one-process.md).
+
+- **A session tree is one `fiber serve` process.** The tree is a top-level
+  session and its delegates. A Fiber delegate runs as threads in its root's
+  process (`docs/delegates.md`), and the root's process owns the tree's MCP
+  servers (`docs/mcp.md`).
+- **The terminal is its own process.** `fiber` starts a `fiber serve` session
+  with no stdin driver, attaches to its socket and draws what arrives. It is a
+  client like any other, with no path to state the socket does not carry.
+  A TUI crash, or an error in a TUI extension, ends the TUI and never the
+  session.
+- **Every running session listens on a local socket** at
+  `~/.fiber/run/<session_id>` (`docs/state.md`), reachable only by the account
+  that owns Fiber home. The socket carries the same driver commands and event
+  stream as stdin and stdout. Being that account is the authentication.
+- **Resuming a session that is still running attaches to it.** A session log
+  has one writer (`docs/events.md`), so `fiber --resume` never opens a second
+  one.
+
+The session and the socket are the only paths into a running session. The
+terminal, a script on stdin and a phone through `fiber remote` are the same
+kind of client, as map premise 5 requires.
+
+## Remote clients
+
+A web or mobile client can attach to a running session and start a new one.
+It reaches the host through `fiber remote`, an optional daemon.
+
+- **`fiber remote` holds no session.** It lists sessions from their logs,
+  starts `fiber serve` processes, resumes a session whose process has exited,
+  and relays each remote client to a session's socket. Its crash or its
+  restart ends no session, and `fiber upgrade` restarts it.
+- **Fiber ships no relay service.** `fiber remote` listens on an address the
+  person chooses, and the person makes it reachable: tailscale, WireGuard, a
+  LAN or `ssh -L`. Every remote connection presents a token.
+- **A remote client has exactly the terminal's powers.** It receives the same
+  event stream and sends the same driver commands.
+
+What `fiber remote` speaks, how a client gets its token, and whether Fiber
+installs it as a login service are
+[Remote access: the remote endpoint](https://github.com/aakshintala/fiber/issues/86).
 
 ## Isolation
 

@@ -79,6 +79,16 @@ The agent program a delegate runs: Fiber, or another vendor's, such as Claude
 Code or cursor-agent.
 _Avoid_: agent type, backend
 
+**Session tree**:
+A top-level session and every delegate under it. A Fiber session tree runs as
+one process.
+_Avoid_: process tree, job tree
+
+**Daemon**:
+The optional long-lived process that lets remote clients start and attach
+sessions. It holds no session.
+_Avoid_: server, gateway, broker, host
+
 **Fork**:
 A Fiber delegate whose history begins as its parent's conversation up to a
 point, shared rather than copied.
@@ -107,7 +117,13 @@ absent, slow or added later without changing the session.
 **Driver**:
 Something that sends commands to a session. The terminal's input, and stdin on
 the non-interactive door. A driver may only send the commands Fiber defines.
-_Avoid_: controller, client
+_Avoid_: controller
+
+**Client**:
+Something attached to a running session that watches it and may drive it: the
+terminal, a script on stdin, a phone through the daemon. Every client has the
+same powers. A session with no client finishes its work and exits.
+_Avoid_: frontend, UI, consumer
 
 **Participant**:
 Something the loop asks during a turn, whose answer may refuse or change what

@@ -181,8 +181,21 @@ The `job_*` kinds are unchanged. A delegate adds two kinds keyed by `job_id`, as
 - Stopping a delegate (`jobs stop`, `job_stop`) stops its own jobs and delegates
   as its shutdown does ([#34](https://github.com/aakshintala/fiber/issues/34)),
   so a stop reaches every descendant.
-- What happens to a delegate when its parent dies depends on where it runs ("Not
-  settled here").
+- A Fiber delegate runs as threads in its root's process, with its own loop,
+  inbox and tool-call threads ([ADR 0009](adr/0009-each-session-tree-is-one-process.md)).
+  It shares the process's model catalog and MCP servers (`docs/mcp.md`,
+  "Where servers run"). The parent still drives it only through the driver
+  commands and events, so no delegate has a path a supervisor lacks.
+- Stopping a Fiber delegate sets a flag its loop checks, as cancellation does.
+  Its shell commands are stopped through their own process groups
+  (`docs/tools.md`, "Shell").
+- If the root's process dies, every delegate in it dies too. Each one's log
+  then shows a start with no exit, and its job ends `orphaned`
+  (`docs/tools.md`, "Background jobs").
+- A panic in a delegate's thread ends that delegate `failed` and leaves the
+  rest of the tree running. A crash in C code, such as Lua or SQLite, ends the
+  whole process and so the whole tree.
+- Another harness is always a child process of the session that started it.
 
 ## Worktrees
 
@@ -225,12 +238,6 @@ The `job_*` kinds are unchanged. A delegate adds two kinds keyed by `job_id`, as
 
 ## Not settled here
 
-- Where a Fiber delegate runs, on threads inside its parent's process or as its
-  own `fiber serve` process, and with it how a delegate is stopped and what
-  happens to it when its parent dies:
-  [Process architecture: core, TUI and shared services](https://github.com/aakshintala/fiber/issues/81).
-  Either way, the parent drives a Fiber delegate only through the driver
-  commands and events, so no delegate has a path a supervisor lacks.
 - What a harness extension declares:
   [Harness extensions: running another agent as a delegate](https://github.com/aakshintala/fiber/issues/77).
 - Messaging a session that was not started as a delegate:
