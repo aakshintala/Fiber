@@ -80,8 +80,8 @@ Code or cursor-agent.
 _Avoid_: agent type, backend
 
 **Session tree**:
-A top-level session and every delegate under it. A Fiber session tree runs as
-one process.
+A top-level session and every delegate under it. Each session in it is its own
+process, and the root's process owns the tree's MCP servers.
 _Avoid_: process tree, job tree
 
 **Daemon**:

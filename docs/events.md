@@ -98,7 +98,7 @@ answers with `reply` (`docs/mcp.md`, "Elicitation, sampling and roots").
 | Kind | Durable | Payload |
 |---|---|---|
 | `fiber_started` | yes | Fiber version, `schema_version`, new session or resumed |
-| `fiber_exited` | yes | exit code, the final message's `action_id` and its text, `error` if it failed |
+| `fiber_exited` | yes | exit code, the final message's `action_id` and its text, `error` if it failed, `suspended_on` naming the `request_id` when the process exited on a pending approval (`docs/invocation.md`, "Lifecycle") |
 
 A process is not a named unit in the glossary; these two lines record its
 boundary without inventing one. They are durable for one reason: a
@@ -197,7 +197,8 @@ interrupt is not a crash.
 | `permission_resolved` | yes | the decision, any feedback, who answered |
 
 Both are durable so that a driver reconnecting to an unattended session learns
-it is blocked on a human rather than hanging on silence. `request_id` is minted
+it is blocked on a human rather than hanging on silence, and so that a session
+that exited on a pending approval can raise it again on resume. `request_id` is minted
 like any other id; a reply naming a request that is no longer pending is
 rejected and does nothing, so a late approval can never authorise a different
 action.
@@ -264,6 +265,7 @@ Behaviour is `docs/tools.md` ("Background jobs"); delegates are
 | `job_started` | yes | `job_id`, the `action_id` of the tool call that started it, the tool name, a short description, the output file's path |
 | `delegate_started` | yes | `job_id`, the delegate's `session_id`, harness, model reference (role resolved), workspace, worktree path and branch when isolated, `forked_from` for a fork |
 | `job_delta` | no | progress for clients, paced like `tool_call_delta` (`docs/tools.md`, "Progress") |
+| `mcp_call_requested` | no | `request_id`, the MCP tool's name and arguments; raised by a delegate for its parent to run (`docs/mcp.md`, "Where servers run"). The call itself is the delegate's own `tool_call_*` lines |
 | `job_line` | yes | `job_id`, the batch of lines a monitor delivered to the model (cut as `docs/tools.md` describes), and a count of deliveries suppressed since the last one, when any were |
 | `delegate_finished` | yes | `job_id`, the final message (bounded, with `artifact` when cut), usage totals, worktree state (path, branch, dirty) |
 | `job_completed` | yes | `status` (`completed`, `failed`, `cancelled`), `error { code, message }`, `process` as on `tool_call_completed`, and for a failed job the tail of its output, capped |
@@ -310,7 +312,7 @@ What the reader can tell about work that was in flight, from the log alone:
 | `tool_call_started`, no `tool_call_completed` | uncertain; never blindly re-run |
 | `tool_call_completed` | ran, with its outcome |
 | `job_started`, no `job_completed` | the process that ran it died; on open Fiber writes `job_completed` with `status: failed` and `error.code: orphaned`, unless a `rewound` lists the job |
-| `turn_started`, no `turn_completed` | the turn was cut short; render what was logged and say so |
+| `turn_started`, no `turn_completed` | the turn was cut short; render what was logged and say so, unless a `fiber_exited` with `suspended_on` follows, in which case the turn resumes with the request raised again |
 | `fiber_started`, no `fiber_exited` or `rewound` after it | that process died rather than exited |
 | `rewound` last | the session continued elsewhere; the jobs it lists were handed over, so they are not orphaned |
 | `handoff_started`, no `handoff_completed` | the process died during a handoff; the handoff did not take effect, and the model's context is what it was before it |

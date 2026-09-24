@@ -1,4 +1,4 @@
-# 9. Each session tree is one process; the daemon holds none
+# 9. Each session is one process; the daemon holds none
 
 Date: 2026-09-24
 
@@ -26,16 +26,21 @@ Claude Code runs one process per session and a separate `remote-control`
 server started by hand. opencode runs its server and TUI as two threads of one
 process. None of the four runs a sub-agent as its own process.
 
-A delegate costs about 2 MiB as threads and 8 to 9.5 MiB as its own process.
-Each of the owner's MCP servers costs 43 to 93 MiB.
+A delegate costs about 2 MiB as threads and 8 to 9.5 MiB as its own process:
+about 7 MiB more per delegate, or about 56 MiB at the owner's measured peak of
+8. Each of the owner's MCP servers costs 43 to 93 MiB.
 
 ## Decision
 
-- A session tree, meaning a top-level session and its delegates, is one
-  `fiber serve` process. Delegates are threads in it. The root's process owns
-  the tree's MCP servers.
-- The terminal UI is its own process, a client of a `fiber serve` session over
-  that session's local socket.
+- Every session is one `fiber serve` process, a delegate included. A Fiber
+  delegate is a child `fiber serve` of its parent, driven over the pipe it was
+  spawned with, exactly as a delegate running another harness is.
+- The root's process owns the tree's MCP servers. A delegate reaches them
+  through its parent: it raises the call on its event stream and its parent
+  answers with the result (`docs/mcp.md`, "Where servers run").
+- The terminal UI is its own process, client zero of the `fiber serve` it
+  spawns, over that process's stdin and stdout.
+- Every running session listens on a local socket for further clients.
 - `fiber remote` is an optional daemon for remote clients. It starts and
   resumes `fiber serve` processes and relays clients to them. It holds no
   session.
@@ -43,30 +48,44 @@ Each of the owner's MCP servers costs 43 to 93 MiB.
 
 ## Consequences
 
+- One process is one session: one log, one lock, one socket, one set of
+  extension VMs. Nothing in the process has to ask which session it is in.
+- The Fiber harness has the same shape as every other harness: a child
+  process with a prompt in and an event stream out.
+- Stopping a delegate is a signal to its process group, which always works.
+  A crash in C code (Lua, SQLite), an out-of-memory kill or a panic ends one
+  delegate and nothing else.
 - `fiber upgrade` can restart `fiber remote` without stopping any session.
   A running session keeps its binary until it exits.
-- A crash in C code (Lua, SQLite) ends the whole tree it happens in, and no
-  other tree.
-- A TUI crash, or a TUI extension's error, cannot end a session.
-- The TUI can use only what the socket carries, so premise 5 holds by
-  construction.
+- A TUI crash, or a TUI extension's error, cannot interrupt a session's work.
+  The session then follows the lifecycle rule like any session without a
+  client.
+- The TUI can use only what the pipe and the socket carry, so premise 5 holds
+  by construction.
 - Separate session trees share nothing in memory. Each pays for its own MCP
   servers and model catalog.
 - A stdio MCP server's elicitation carries no link to the call that raised it,
   so one shared by several sessions of a tree cannot always be attributed
-  (`docs/mcp.md`, "Elicitation, sampling and roots").
+  (`docs/mcp.md`, "Elicitation, sampling and roots"). Threads would not have
+  changed this.
 
 ## Rejected
+
+A delegate as threads in its root's process. It saves about 7 MiB per
+delegate, less than one MCP server at the measured peak. It makes
+`fiber serve` a multi-session process: several loops, logs, locks and sockets
+in one process, a model catalog and an MCP client called from several loops at
+once, a Lua VM per extension per session in one process, and a stop that is a
+flag native code need never check. A crash in C code or an out-of-memory kill
+would end every session in the tree, and a delegate stuck in native code could
+not be stopped without ending the tree, which
+[Shutdown](https://github.com/aakshintala/fiber/issues/34) forbids. It would
+also make the Fiber harness a different shape from every other harness.
 
 A daemon that runs every session, as codex does. It gives one address for
 every client, cheap sessions as threads, and MCP sharing across the whole
 host. Restarting it for an upgrade stops every model stream and child process
 in every session, and one crash ends every session on the host.
-
-A delegate as its own process. A crash in C code would stay in one delegate,
-and a stop would be a signal to a process group, which always works. It costs
-4 to 5 times the memory of threads, and the delegate would need a proxy to
-reach the root's MCP servers.
 
 Sharing MCP servers across session trees through the daemon. It would save
 about 80 to 100 MiB per extra concurrent session, but only in about 1 active
@@ -74,7 +93,8 @@ window in 8. It adds five costs: elicitations that cannot be attributed across
 sessions, a reload that needs a private instance, a daemon restart that
 restarts servers under running sessions, a daemon crash that removes MCP from
 every session, and a second code path for sessions started without the daemon.
-Sharing can be added later without changing the tool contract.
+Sharing can be added later without changing the tool contract: the relay a
+delegate uses is the mechanism.
 
 A hosted relay, as Claude Code's Remote Control uses. It works from any
 network with nothing installed on the phone. Fiber would have to run the
@@ -83,3 +103,8 @@ command.
 
 The TUI in the session's process, as Claude Code and pi do. It is one process
 with fewer parts. A TUI crash or a TUI extension's error would end the session.
+
+The TUI attaching to its own session over the socket rather than the pipe. It
+would need the TUI to wait for the socket to appear, and the session to know
+it was started without a stdin driver. The pipe is there at spawn and carries
+the same bytes.

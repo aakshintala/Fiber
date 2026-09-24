@@ -207,8 +207,8 @@ Fiber asks each field in turn:
 When no answer is possible, Fiber declines, which is a response MCP defines.
 That is the same case as an escalation's block (`docs/permissions.md`,
 "Headless"): a session started by `fiber ask`, or one that has been sent
-`close`. Otherwise a pending elicitation waits for a client, as any
-interaction does. An elicitation from a delegate is relayed up the tree like a
+`close`. Otherwise a pending elicitation waits for a client within the call's
+timeout ("Calls"); an elicitation does not extend it. An elicitation from a delegate is relayed up the tree like a
 delegate's escalation (`docs/permissions.md`, "Delegates").
 
 On stdio, an elicitation carries nothing that links it to the call that raised
@@ -266,13 +266,18 @@ The file format belongs to Configuration, which is not yet specified.
 
 ## Where servers run
 
-A session tree is one process ([ADR 0009](adr/0009-each-session-tree-is-one-process.md)),
-and the root's process owns the tree's servers. Every delegate in the tree
-calls them there. Separate trees share none: each top-level session starts its
-own.
+Every session is one process ([ADR 0009](adr/0009-each-session-is-one-process.md)),
+and the root's process owns the tree's servers. A delegate starts none. It
+gets their tool definitions from its parent as the driver command `mcp_tools`
+before its first prompt, and runs a call by raising `mcp_call_requested` on
+its event stream, which its parent answers with `mcp_result`
+(`docs/invocation.md`, `docs/events.md`). A parent that is itself a delegate
+passes both up. This is the request-and-reply shape the loop already uses to
+ask a human anything, with the parent as the answerer. Separate trees share
+none: each top-level session starts its own.
 
 - The tool set is still fixed per session. A delegate's first request declares
-  the tree's server tools as they are then.
+  the tree's server tools as `mcp_tools` gave them.
 - A server whose behavior depends on the folder it started in serves every
   session in the tree, including a delegate in a worktree, as the root started
   it. A call that names no path acts in the root's workspace, not the
