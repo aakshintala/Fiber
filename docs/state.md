@@ -126,9 +126,9 @@ started with `isolation: worktree`. When one is removed or kept is
 `docs/delegates.md` ("Worktrees").
 
 **Sockets.** `run/<session_id>` is the local socket of a running session
-(`docs/invocation.md`, "Processes"), mode 0600 in a 0700 directory. It exists
-while the session's process runs; a socket left by a process that died is
-stale, and whoever finds it removes it. It sits at the top of Fiber home
+(`docs/invocation.md`, "Processes"), mode 0600 in a 0700 directory. The process
+holding that session's `session.lock` owns it: it removes any socket left by a
+dead process before binding, and nothing else removes one. It sits at the top of Fiber home
 because macOS limits a socket's path to 103 bytes (`sun_path[104]` in
 `sys/un.h`; binding at 104 fails, probed on Darwin 25.6.0), and a path under
 `projects/<key>/sessions/<id>/` exceeds that. Linux allows 107 (`unix(7)`, not
@@ -157,7 +157,10 @@ One writer per session via `session.lock` is `docs/events.md`.
 There is no layout version marker. The first change to this layout adds a
 file `layout` at the top of Fiber home containing `2`; a missing file means
 layout 1. `fiber upgrade` changes only the Fiber binary and `extensions/`;
-it never touches sessions, config, rules, approvals or credentials. How the
+it never touches sessions, config, rules, approvals or credentials. It
+replaces the binary by renaming a new file over it, never by writing in place,
+so a running session keeps the file it launched from; macOS kills a process
+whose signed binary is changed underneath it. How the
 binary is fetched and replaced is not settled here.
 
 ## Not settled here

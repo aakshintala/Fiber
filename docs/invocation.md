@@ -14,7 +14,7 @@ the process contract over them.
 
 | | What it is |
 |---|---|
-| `fiber` | The terminal. Requires a tty; without one it is a usage error naming `fiber serve`. It starts a `fiber serve` session and attaches to it ("Processes"). |
+| `fiber` | The terminal. Requires a tty; without one it is a usage error naming `fiber serve`. It starts a `fiber serve` session and drives it ("Processes"). |
 | `fiber serve` | The non-interactive door. Stays open. Its stdin is the driver channel: one JSON command per line. This is the door a GUI frontend, a supervising tool or a script uses. It also listens on a local socket, so other clients can attach. |
 | `fiber ask` | The same non-interactive door with the prompt already supplied and no further prompts accepted. Its stdin is the prompt. |
 
@@ -87,6 +87,8 @@ acknowledgements carry no `seq`, so they never reach the log.
 | `steer_drop` | Removes a queued steering message, so nothing is applied. |
 | `cancel` | Ends the running turn. |
 | `reply` | Answers an interaction the loop raised: approval, confirm, select, text input or status. Takes an optional `session_id` naming a delegate. |
+| `mcp_tools` | Gives a delegate the tool definitions of its tree's MCP servers, before its first prompt (`docs/mcp.md`, "Where servers run"). Rejected `stale_request` once the tool set is fixed. |
+| `mcp_result` | Answers an `mcp_call_requested` a delegate raised, with the call's result. Rejected `stale_request` if no such request is pending. |
 | `job_stop` | Stops a running job by `job_id`. Rejected `stale_request` if the job is not running. |
 | `background` | Moves every shell call running in the current turn to the background (`docs/tools.md`, "Shell"). Rejected `stale_request` if none is running. |
 | `reload` | Re-reads configuration, restarts changed MCP servers and extensions, and declares the tool set again (`docs/mcp.md`, "Reload"). Rejected `busy` if a turn is running. |
@@ -180,13 +182,19 @@ never holding the pipe.
 There is no detach command. A session that exits is resumed from its log, so
 reattaching to one needs nothing kept running.
 
-**A pending interaction waits for a client.** An approval, an elicitation or
-any other interaction that is pending when the last client leaves stays
-pending, and the session stays alive waiting for it. The terminal and
-`fiber remote` list sessions that are waiting on a person. Two cases have no
-one to wait for, and there escalation is a block as `docs/permissions.md`
-("Headless") describes: a session started by `fiber ask`, and a session that
-has been sent `close`.
+**A pending approval does not keep a session alive.** An approval is raised
+before its tool call runs, so nothing is in flight. When the last client
+leaves with an approval pending and nothing else running, the session exits,
+and `fiber_exited` names the request it stopped on. Resuming the session
+raises the request again and the turn goes on from there. The terminal and
+`fiber remote` list sessions that are waiting on a person, from their logs.
+Two cases have no one to wait for, and there escalation is a block as
+`docs/permissions.md` ("Headless") describes: a session started by
+`fiber ask`, and a session that has been sent `close`.
+
+**A pending elicitation waits within its call's timeout.** An MCP call is in
+flight, so the session stays alive for it, and no longer than the call's
+timeout (`docs/mcp.md`, "Calls"). No wait on a person is unbounded.
 
 **A prompt arriving mid-turn is rejected `busy` and starts nothing.** Steering
 is the mid-turn channel. Fiber holds no prompt queue that no durable event
@@ -223,28 +231,39 @@ no tty is required**, because either would break that byte-for-byte equality.
 Settled by
 [Process architecture: core, TUI and shared services](https://github.com/aakshintala/fiber/issues/81);
 the rationale and the rejected layouts are
-[ADR 0009](adr/0009-each-session-tree-is-one-process.md).
+[ADR 0009](adr/0009-each-session-is-one-process.md).
 
-- **A session tree is one `fiber serve` process.** The tree is a top-level
-  session and its delegates. A Fiber delegate runs as threads in its root's
-  process (`docs/delegates.md`), and the root's process owns the tree's MCP
-  servers (`docs/mcp.md`).
+- **Every session is one `fiber serve` process.** A Fiber delegate is a
+  child `fiber serve` of its parent, driven over the pipe it was spawned
+  with, as a delegate on any other harness is (`docs/delegates.md`). The
+  root's process owns the tree's MCP servers, and its delegates reach them
+  through it (`docs/mcp.md`).
 - **The terminal is its own process.** `fiber` starts a `fiber serve` session
-  with no stdin driver, attaches to its socket and draws what arrives. It is a
-  client like any other, with no path to state the socket does not carry.
-  A TUI crash, or an error in a TUI extension, ends the TUI and never the
-  session.
+  and is its client zero: commands down the pipe, events back up it. It draws
+  what arrives and has no path to state the stream does not carry. It opens a
+  session's socket only to attach to one already running. A TUI crash, or an
+  error in a TUI extension, cannot interrupt the session's work; the session
+  then follows the lifecycle rule like any session whose client left.
 - **Every running session listens on a local socket** at
   `~/.fiber/run/<session_id>` (`docs/state.md`), reachable only by the account
   that owns Fiber home. The socket carries the same driver commands and event
-  stream as stdin and stdout. Being that account is the authentication.
+  stream as stdin and stdout. Being that account is the authentication. The
+  process holding the session's lock owns the socket: it removes any old one
+  before binding, and nothing else ever removes one.
 - **Resuming a session that is still running attaches to it.** A session log
   has one writer (`docs/events.md`), so `fiber --resume` never opens a second
-  one.
+  one. A client attaching first folds the log by `seq`, then streams.
+- **A client attaches across versions only when it can read the stream.** A
+  session keeps the binary it started with through `fiber upgrade`. A client
+  reads the session's `schema_version` from `fiber_started`; an additive
+  difference is fine (`docs/events.md`, "Versioning"), and on a breaking one
+  the client says which version the session runs and declines, so the person
+  can close it or let it exit.
 
-The session and the socket are the only paths into a running session. The
-terminal, a script on stdin and a phone through `fiber remote` are the same
-kind of client, as map premise 5 requires.
+The pipe and the socket are the only paths into a running session, and they
+carry the same bytes. The terminal, a script on stdin, a parent session and a
+phone through `fiber remote` are the same kind of client, as map premise 5
+requires.
 
 ## Remote clients
 
@@ -253,8 +272,12 @@ It reaches the host through `fiber remote`, an optional daemon.
 
 - **`fiber remote` holds no session.** It lists sessions from their logs,
   starts `fiber serve` processes, resumes a session whose process has exited,
-  and relays each remote client to a session's socket. Its crash or its
-  restart ends no session, and `fiber upgrade` restarts it.
+  and relays each remote client to a session's socket. A session is running
+  when its socket accepts a connection; anything else is a log to resume. Its
+  crash or its restart ends no session, and `fiber upgrade` restarts it.
+- **A remote client reaches a delegate as the terminal does**: through the
+  root, with `session_id` on `steer` and `reply`. It never opens a delegate's
+  own socket.
 - **Fiber ships no relay service.** `fiber remote` listens on an address the
   person chooses, and the person makes it reachable: tailscale, WireGuard, a
   LAN or `ssh -L`. Every remote connection presents a token.

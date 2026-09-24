@@ -280,8 +280,9 @@ private channel. Claude Code makes the same distinction with
 With no answer possible, escalation is a block and the run continues under
 the rule above until it exhausts the block budget. No answer is possible in a
 session started by `fiber ask`, and in a session that has been sent `close`.
-Anywhere else, a client that leaves may come back, so a pending escalation
-waits for one (`docs/invocation.md`, "Lifecycle").
+Anywhere else, a client that leaves may come back: the session exits on the
+pending escalation and raises it again when resumed (`docs/invocation.md`,
+"Lifecycle").
 
 ## Delegates
 

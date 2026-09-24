@@ -48,7 +48,7 @@ in this contract, as an ephemeral event where it is display-only."
 | `provider` | Talks to model APIs: wire formats, credentials, streaming. Reached only through the provider seam. |
 | `tools` | Runs tool calls: shell, file edits, search. Reached only through the tool seam. |
 | `extensions` | Loads extension code, hosts the runtime, and wires what extensions register into the three seams. |
-| `tui` | Draws the terminal, in its own process, as a client of a session's socket. Watches events, sends commands, knows nothing else. |
+| `tui` | Draws the terminal, in its own process, as a client of a session over its pipe or socket. Watches events, sends commands, knows nothing else. |
 | `config` | Reads the configuration files in [Fiber home](state.md). Answers questions; never asks any. |
 | `doors` | The non-interactive front door: argv or stdin in, JSON lines out. Which doors exist and what a driver may send them is `docs/invocation.md`; this page only fixes that a door sits beside the TUI with no privilege the TUI lacks. |
 | `main` | The composition root. Parses argv, builds everything once, picks a door. No feature logic. |
@@ -168,13 +168,18 @@ Fiber uses blocking threads and no async runtime.
 | Thread | Owns | Lives |
 |---|---|---|
 | loop | the turn: what happens next, and every durable event | the session |
-| driver input | a door's stdin | the process, when started with a stdin driver |
-| one per socket client | that client's connection: its commands in, its events out | the connection |
+| one per client | that client's connection: its commands in, its events out | the connection |
 | one per running tool call | that call's subprocess and its output | the call |
 
-A session process runs a tree: the root session and its delegates. Each
-delegate has its own loop thread, its own inbox and its own tool-call
-threads, in the same process (`docs/delegates.md`).
+A client is a reader and a writer, and every client is the same code. Client
+zero is the process's own stdin and stdout; every connection to the session's
+socket is another. A closed pipe and a closed socket look the same to the
+thread reading them, so one rule covers a client leaving. `fiber ask` spends
+its stdin on the prompt, so its client zero only writes, which is a watcher.
+
+A session process runs one session. A delegate is a child `fiber serve`
+process of its parent, and its parent is its client zero
+(`docs/delegates.md`).
 
 The terminal runs in a separate process (`docs/invocation.md`,
 "Processes") with two threads of its own: terminal input, which owns the
@@ -272,9 +277,8 @@ turn's input rather than being dropped.
 
 The threading is identical on both doors, as map premise 6 requires. The
 terminal is a client of a `fiber serve` session, so every session process is
-the same program: a stdin reader when started with a stdin driver, a thread per
-socket client, and the loop, the inbox, the streaming, the cancellation and the
-tool-call scheduling as above.
+the same program: a thread per client, and the loop, the inbox, the streaming,
+the cancellation and the tool-call scheduling as above.
 A door has no privilege the terminal lacks, and neither has a path to state
 that the other does not.
 
