@@ -93,7 +93,8 @@ File undo would need a snapshot per step. Own-write copies miss shell
 changes, which every harness above leaves untracked. A whole-tree snapshot
 catches them, at the cost of a `git status`-class scan of the working tree.
 
-How many files the owner's pi sessions write, per session:
+How many files the owner's pi sessions write, per session
+([`writes.py`](writes.py)):
 
 | | p50 | p90 | p99 | max |
 |---|---|---|---|---|
@@ -103,7 +104,7 @@ How many files the owner's pi sessions write, per session:
 
 A whole-tree snapshot, measured on macOS arm64 (Apple M3 Pro, git 2.50.1), on
 a copy of this repository with 20,000 untracked files added, using a
-persistent index per session:
+persistent index per session ([`snapshot.sh`](snapshot.sh)):
 
 | Snapshot | Time |
 |---|---|
@@ -129,8 +130,9 @@ Run from the repository root. Each reads the owner's local sessions.
 ```sh
 python3 research/rewind/branches.py   # pi in-file branches and summaries
 python3 research/rewind/forks.py      # pi sessions with a parent session
+python3 research/rewind/writes.py     # pi writes and steps per session
 python3 research/rewind/cc.py         # Claude Code rewind points
 ```
 
-The write counts and the snapshot timings came from one-off runs whose
-scripts are not kept here.
+`snapshot.sh` times the whole-tree snapshot. Run it on a disposable copy of a
+repository, as its header says, never on the repository itself.

@@ -127,9 +127,10 @@ terminal binds it to Ctrl+B. It never kills a command: the command becomes a
 job and keeps its timeout.
 
 **`rewind` moves the process to the new session.** From then on `fiber serve`
-drives the new session: it releases the old session's lock, takes the new
-one's, and its lines carry the new `session_id`. The old session's log is
-left as it was.
+drives the new session. It closes the old session with `rewound` while it
+still holds that session's lock, releases the lock, takes the new one's, and
+its lines carry the new `session_id`. A session no process holds is opened,
+and its lock taken, before it is rewound.
 
 **The set is a floor, not a proof.** It is what Fiber's settled semantics
 require today. An open ticket may add one — [#24](https://github.com/aakshintala/fiber/issues/24)
