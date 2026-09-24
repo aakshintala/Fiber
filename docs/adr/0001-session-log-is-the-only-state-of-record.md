@@ -12,7 +12,7 @@ live maps or a rescan on restore, which is why rewind and resume lie there.
 So: **the log is the only authority**. Anything the loop, the TUI or an
 extension needs after a resume is an event or a fold of events; runtime objects
 may cache and index but never become a second truth. The log is append-only for
-the life of the session, so compaction emits new events rather than rewriting
+the life of the session, so a handoff appends new events rather than rewriting
 it, and a session directory holds no file that can contradict it. The contract
 is `docs/events.md`; the rationale and the rejected alternatives are on
 [issue #6](https://github.com/aakshintala/fiber/issues/6).

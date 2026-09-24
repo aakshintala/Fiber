@@ -21,8 +21,8 @@ Two consequences that get violated first, so they are stated first:
   bytes too big to inline. No `session.json`, no usage ledger, no checkpoint, no
   manifest. Token totals, history length and what the last turn was doing are
   folds computed at open.
-- **The log is append-only for the life of the session.** Compaction emits new
-  events. It never rewrites, renames or restarts the file, because a sequence
+- **The log is append-only for the life of the session.** A handoff appends
+  new events. It never rewrites, renames or restarts the file, because a sequence
   number a consumer stored yesterday must still point at the same event today.
 
 ## The envelope
@@ -143,7 +143,7 @@ threading this rests on is the concurrency section of `docs/architecture.md`;
 the driver commands that send, amend and withdraw one — `steer`, `steer_amend`
 and `steer_drop` — are `docs/invocation.md`.
 
-`turn_completed` means settled. Retries and compaction happen inside the turn
+`turn_completed` means settled. Retries and handoffs happen inside the turn
 and appear as actions, so there is never a second "really finished" event.
 
 A **step** gets no event. It is one round-trip to the model, and its boundary is
@@ -222,6 +222,26 @@ late is a second `usage_recorded` with the same generation id, replacing the
 first. Consumers sum; resume rebuilds the ledger by folding. No pending queue,
 no watermarks, no reconciliation file.
 
+### Handoff
+
+Behaviour is `docs/handoff.md`.
+
+| Kind | Durable | Payload |
+|---|---|---|
+| `handoff_started` | yes | `trigger` (`auto`, `person`, `overflow`, `tool`); written before the note request, and not written for a tool-started handoff, which makes none |
+| `handoff_completed` | yes | `outcome` (`completed`, `failed`, `cancelled`), `error { code, message }` on failure, `note` (the `action_id`s of the actions carrying the note, in call order), `tokens_before`, and the person's `instructions` when there were any |
+| `context_nudged` | yes | `tokens`, the context size when the nudge was given, and `trigger_at`, the size at which an automatic handoff runs |
+
+The note request is an ordinary assistant message action with its own
+`usage_recorded`. `handoff_completed` points at the note and never copies its
+text ("Writing"). `outcome` is a closed set: adding a value is a breaking
+change. `context_nudged` is durable because the model saw it; the nudge's text
+is generated from its payload.
+
+A handoff that fails or is cancelled leaves the model's context as it was. A
+cancelled handoff is a person's cancellation of the turn, which then completes
+`interrupted`.
+
 ### MCP servers
 
 Behaviour is `docs/mcp.md`.
@@ -278,7 +298,7 @@ A session is reconstructed from the log and the configuration in
 Open memory-maps or scans the file into an offset table and folds the
 latest-wins facts as it goes. Only the window a consumer actually needs is
 parsed. The model's context, the TUI's viewport and any search are three
-residency policies over one primitive: a range read by `seq`. Compaction
+residency policies over one primitive: a range read by `seq`. A handoff
 shortening what the model sees must not shorten what a person can scroll back
 to.
 
@@ -293,6 +313,7 @@ What the reader can tell about work that was in flight, from the log alone:
 | `turn_started`, no `turn_completed` | the turn was cut short; render what was logged and say so |
 | `fiber_started`, no `fiber_exited` or `rewound` after it | that process died rather than exited |
 | `rewound` last | the session continued elsewhere; the jobs it lists were handed over, so they are not orphaned |
+| `handoff_started`, no `handoff_completed` | the process died during a handoff; the handoff did not take effect, and the model's context is what it was before it |
 
 On open, Fiber writes that `job_completed` and does not touch any process. A
 crash does not kill a child in its own process group, so Fiber cannot know
@@ -338,8 +359,9 @@ earlier point. A person starts one from the terminal, a driver with the
   cache while the cache is warm. Everything after the history rides on the new
   session's `session_started`, as `rewind { summary?, note, jobs }`, where
   `jobs` is the adopted `job_id`s.
-- **Compaction is inherited by position.** A compaction in the old session at
-  or before the point applies to the new session. One after it does not.
+- **A handoff is inherited by position.** A handoff completed in the old
+  session at or before the point applies to the new session. One after it does
+  not.
 - **Jobs.** A job started before the point and still running is adopted by the
   new session: its history shows the job starting, so it must own it. Each job
   started after the point and still running is listed, and the person chooses
@@ -363,8 +385,7 @@ earlier point. A person starts one from the terminal, a driver with the
 The model does not rewind. For planned speculative work it uses
 `delegate_fork`, with `isolation: worktree` where files matter. For an
 unplanned dead end it hands off: it restarts its own context from a note it
-writes. How a handoff works is settled in
-[Compaction: when a session outgrows its context](https://github.com/aakshintala/fiber/issues/24).
+writes. How a handoff works is `docs/handoff.md`.
 
 ## Writing
 
