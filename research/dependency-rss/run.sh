@@ -1,0 +1,42 @@
+#!/bin/sh
+# Peak memory of each candidate crate, alone, over the featureless baseline.
+# Median of 5 runs. Prints a Markdown table.
+#
+# Linux reports peak RSS. macOS reports peak memory footprint (what Activity
+# Monitor shows): macOS RSS also counts system framework pages shared with
+# every other process, and a crate that links Security.framework shows
+# ~4.5 MiB of RSS before it runs a line of code.
+set -eu
+cd "$(dirname "$0")"
+FEATURES="serde_json ureq ratatui rusqlite mlua clap thiserror signal-hook getrandom base64 ring rustix regex ignore similar pulldown-cmark syntect"
+
+peak_kib() {
+  if [ "$(uname)" = Darwin ]; then
+    /usr/bin/time -l "$1" 2>&1 >/dev/null | awk '/peak memory footprint/ {print int($1 / 1024)}'
+  else
+    /usr/bin/time -v "$1" 2>&1 >/dev/null | awk -F': ' '/Maximum resident set size/ {print $2}'
+  fi
+}
+
+median() {
+  bin=$1
+  for _ in 1 2 3 4 5; do peak_kib "$bin"; done | sort -n | sed -n 3p
+}
+
+build() {
+  cargo build --release -q --target-dir "target/$1" ${2:+--features "$2"}
+  echo "target/$1/release/dependency-rss"
+}
+
+echo "$(uname -sm), $(rustc --version)"
+base=$(median "$(build base "")")
+echo
+if [ "$(uname)" = Darwin ]; then metric="Peak footprint"; else metric="Peak RSS"; fi
+echo "| Crate | $metric (KiB) | Over baseline (KiB) | Stripped binary (KiB) |"
+echo "|---|---:|---:|---:|"
+echo "| (none) | $base | 0 | $(( $(wc -c < target/base/release/dependency-rss) / 1024 )) |"
+for f in $FEATURES; do
+  bin=$(build "$f" "$f")
+  kib=$(median "$bin")
+  echo "| $f | $kib | $((kib - base)) | $(( $(wc -c < "$bin") / 1024 )) |"
+done
