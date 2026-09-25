@@ -240,7 +240,9 @@ Installed extensions live in [Fiber home](state.md), one directory each, at
 `extensions/<name>/`.
 
 Installing an extension runs none of its code. A pure-data provider is only
-ever read, and a Lua script first runs when the extension is first used.
+ever read, and a Lua script first runs when the extension is first used. An
+extension that registers a tool is first used at session start, because the
+tool set is fixed before the first request (`docs/prompt-cache.md`, "Tools").
 
 ### A fresh install
 

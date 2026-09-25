@@ -112,12 +112,15 @@ In order:
    description, as the rewind note does (`docs/events.md`, "Rewind").
 
 When a tool set `control.handoff`, the other calls in that step and their
-results follow the note verbatim, because the model had not seen them. When two
-tools in one step set it, their notes are joined in call order.
+results follow the note verbatim, because the model had not seen them. They go
+as one message holding those calls in call order, then one message holding
+their results in the same order. The call that set `control.handoff`, and its
+result, are not sent. When two tools in one step set it, their notes are joined
+in call order.
 
 The cut is the step boundary at which the handoff ran. Everything after that
-boundary in the log follows as usual. This is the rule
-[Prompt cache](https://github.com/aakshintala/fiber/issues/33) builds on.
+boundary in the log follows as usual. This is the rule `docs/prompt-cache.md`
+builds on.
 
 ## Looking back
 
@@ -248,4 +251,5 @@ cost model supports handing off at that point too.
   [Rewind](https://github.com/aakshintala/fiber/issues/32)
 - The tool contract: `docs/tools.md`, settled by
   [The tool contract](https://github.com/aakshintala/fiber/issues/14)
-- [Prompt cache](https://github.com/aakshintala/fiber/issues/33)
+- The prompt cache: `docs/prompt-cache.md`, settled by
+  [Prompt cache](https://github.com/aakshintala/fiber/issues/33)

@@ -109,6 +109,17 @@ The text a handoff restarts the model's context from, written by the session's
 own model.
 _Avoid_: summary
 
+**Prompt cache**:
+A provider's store of the start of a request, reused by a later request whose
+leading bytes match. A request that differs from some point on pays in full
+for everything after it.
+_Avoid_: context cache, KV cache
+
+**Preamble**:
+What every model request in a session starts with: the system prompt, the tool
+definitions and the request settings. It changes only when it is built again.
+_Avoid_: prefix, header
+
 **Role**:
 A configured name for a delegate's model reference, so that written
 instructions survive a model being withdrawn.

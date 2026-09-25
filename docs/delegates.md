@@ -231,12 +231,14 @@ The `job_*` kinds are unchanged. A delegate adds two kinds keyed by `job_id`, as
   the parent's byte for byte up to the new content, so:
   - It takes no model or effort. It runs on the parent's model, effort and
     thinking configuration, and every request setting that changes the prefix.
-  - It keeps the parent's exact tool set and system prompt.
+  - It sends the parent's latest preamble before its point, as logged in
+    `preamble_built`, so its tool set, system prompt and request settings
+    match (`docs/prompt-cache.md`, "The preamble").
   - Its identity and task go in its first user message, never the system prompt.
   - The `seq` is the position just before the assistant message that called
     `delegate_fork`, so no tool call is left without a result.
-  - OpenAI's `prompt_cache_key` is shared by the whole lineage
-    ([#33](https://github.com/aakshintala/fiber/issues/33)).
+  - Every provider's cache key is the root session's id, shared by the whole
+    lineage (`docs/prompt-cache.md`, "Cache markers and keys").
 - Other harnesses have no fork: a Fiber conversation cannot be handed to them.
 
 ## Not settled here

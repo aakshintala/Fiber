@@ -92,6 +92,7 @@ acknowledgements carry no `seq`, so they never reach the log.
 | `job_stop` | Stops a running job by `job_id`. Rejected `stale_request` if the job is not running. |
 | `background` | Moves every shell call running in the current turn to the background (`docs/tools.md`, "Shell"). Rejected `stale_request` if none is running. |
 | `reload` | Re-reads configuration, restarts changed MCP servers and extensions, and declares the tool set again (`docs/mcp.md`, "Reload"). Rejected `busy` if a turn is running. |
+| `model` | Switches model, effort or thinking at the next turn boundary. Takes a model reference and optional effort and thinking. The switch rebuilds the prompt cache, and the terminal says so with the rebuild's size first (`docs/prompt-cache.md`, "Switching model"). Rejected `invalid_arguments` for an unknown model. |
 | `handoff` | Starts a handoff: the model's context restarts from a note the model writes (`docs/handoff.md`). Takes optional instructions saying what the next stretch of work focuses on. During a turn it applies at the next step boundary, as a steering message does; between turns it is a turn of its own whose input is the command. |
 | `rewind` | Starts a new session that continues a session from an earlier point (`docs/events.md`, "Rewind"), and answers with the new session's id. Takes an optional `session_id`, default this session; an optional `seq`, default the start of the latest turn; and whether to summarise. Rejected `busy` if a turn is running, `not_step_boundary` if `seq` is not a step boundary, `session_held` if another process holds the session, and `delegate_session` if it is a delegate. |
 | `close` | Accept no more prompts; finish the turn in flight, then any running jobs (`docs/tools.md`, "Background jobs"), and exit. |
@@ -139,8 +140,7 @@ its lines carry the new `session_id`. A session no process holds is opened,
 and its lock taken, before it is rewound.
 
 **The set is a floor, not a proof.** It is what Fiber's settled semantics
-require today. An open ticket may add one — [#12](https://github.com/aakshintala/fiber/issues/12)
-if a model can be switched mid-session. Adding a command is additive and not
+require today. A later ticket may add one. Adding a command is additive and not
 breaking, which is why `unknown_command` exists: an older Fiber tells a newer
 client no, in words, instead of ignoring it.
 
