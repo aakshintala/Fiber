@@ -203,9 +203,8 @@ describes; the admission-ordered steering queue is the only queue.
 **Cancellation targets the turn, not the process.** What it does is the
 concurrency section of `docs/architecture.md` and adds nothing here.
 
-**Exit codes: 0 success, 1 failure, 130 interrupt, 143 SIGTERM.** What SIGTERM
-has to guarantee before the process goes is
-[#34](https://github.com/aakshintala/fiber/issues/34).
+**Exit codes: 0 success, 1 failure, 129 SIGHUP, 130 SIGINT, 143 SIGTERM.**
+What a signal guarantees before the process goes is "Shutdown".
 
 ## What a caller gets back
 
@@ -241,9 +240,11 @@ the rationale and the rejected layouts are
 - **The terminal is its own process.** `fiber` starts a `fiber serve` session
   and is its client zero: commands down the pipe, events back up it. It draws
   what arrives and has no path to state the stream does not carry. It opens a
-  session's socket only to attach to one already running. A TUI crash, or an
-  error in a TUI extension, cannot interrupt the session's work; the session
-  then follows the lifecycle rule like any session whose client left.
+  session's socket only to attach to one already running. It starts that
+  process in a new process session, so a closed window or a signal to the
+  terminal reaches the terminal alone. A TUI crash, or an error in a TUI
+  extension, cannot interrupt the session's work; the session then follows
+  the lifecycle rule like any session whose client left.
 - **Every running session listens on a local socket** at
   `~/.fiber/run/<session_id>` (`docs/state.md`), reachable only by the account
   that owns Fiber home. The socket carries the same driver commands and event
@@ -264,6 +265,99 @@ The pipe and the socket are the only paths into a running session, and they
 carry the same bytes. The terminal, a script on stdin, a parent session and a
 phone through `fiber remote` are the same kind of client, as map premise 5
 requires.
+
+## Shutdown
+
+Settled by
+[Shutdown: what SIGTERM has to guarantee](https://github.com/aakshintala/fiber/issues/34);
+that ticket's resolution holds the rationale and the rejected alternatives.
+What pi, codex and Claude Code do, and what a crash leaves behind, are
+`research/shutdown/`.
+
+A shutdown is Fiber stopping because a signal told it to. It is bounded, it
+stops everything the session started, and it asks nobody anything. Exiting
+because the work ran out ("Lifecycle") and `close` are not shutdowns: both
+wait for jobs without a cap. A supervisor that wants the work finished sends
+`close`, and SIGTERM when its patience runs out.
+
+**Three signals, one path.** SIGTERM, SIGINT and SIGHUP each start a
+shutdown. They differ only in the exit code: 143, 130 and 129. A second
+SIGTERM or SIGINT during a shutdown skips the grace period below: every
+process group still alive gets SIGKILL at once, and Fiber writes what it
+knows and exits.
+
+**What happens, all at once:**
+
+- The model request's socket is closed.
+- Every running tool call's process group, every job's and every delegate's
+  gets SIGTERM. A group still alive 800 ms later gets SIGKILL, and Fiber
+  reads its output for at most 2 s more: the sequence in `docs/tools.md`
+  ("Stopping a command"). Groups are signalled together, never one after
+  another. Six groups that ignore SIGTERM took 0.81 s in parallel and 4.85 s
+  in sequence (macOS arm64, `research/shutdown/probe5_nested_kill_cost.py`).
+- A delegate is a child `fiber serve`, and SIGTERM starts its own shutdown.
+  Its parent waits for it to exit, up to the bound, rather than sending
+  SIGKILL at 800 ms, so the delegate stops its own commands and writes its
+  own `fiber_exited`. Depth is capped at 2 (`docs/delegates.md`) and every
+  process forwards the signal before doing anything else, so every level of
+  a tree counts down from almost the same moment.
+- Each MCP call in flight gets `notifications/cancelled` and ends `failed`
+  with code `mcp_cancel_requested`, as on a cancelled turn (`docs/mcp.md`,
+  "Calls"); a pending elicitation goes with its call. Then each stdio
+  server's stdin is closed and it gets SIGTERM, then SIGKILL 800 ms later.
+- No model request is made, no ending notice is given, and no hook runs.
+
+**What is written.** The turn in flight ends as the cancel key ends it
+(`docs/architecture.md`, "Cancellation"): each tool call completes
+`cancelled` once its group is empty, each job `cancelled`, a handoff in
+flight `cancelled`, and the turn `turn_completed { outcome: interrupted }`.
+Nothing is written for a call before it has stopped. Then `fiber_exited`
+with the exit code and no final message, the socket is unlinked, the lock is
+released, and the process exits.
+
+A session waiting on an approval when the signal arrives has nothing running
+(`docs/architecture.md`: "Permission decisions are made in order, before any
+of them runs"). It stops its jobs and exits with `suspended_on` naming the
+request, as it does when the last client leaves ("Lifecycle"), and resuming
+raises the request again.
+
+A signal that arrives before `fiber_started` is written exits with the code
+and writes nothing. Once `fiber_started` is written, `fiber_exited` always
+is, unless the process dies.
+
+**The bound is 5 seconds** from the signal to exit, per process. The
+command stage is at most 2.8 s (800 ms grace plus 2 s drain), the levels of
+a tree run concurrently, and the rest is margin. It sits under the
+supervisors Fiber runs under: Docker sends SIGKILL 10 s after SIGTERM,
+Kubernetes 30 s, systemd 90 s (each one's documented default, not measured).
+codex's headless server gives itself 45 s. Past the bound, every group still
+alive gets SIGKILL; each call, job or delegate it belonged to ends `failed`
+with code `indeterminate` (`docs/tools.md`: "never `completed`"), and the
+exit code is unchanged. A delegate killed this way leaves a log with no
+`fiber_exited`, like any process that died.
+
+**What a crash leaves.** A crash, a SIGKILL, or a supervisor that gives up
+before the bound stops nothing. A command whose output goes to the pipe
+Fiber held dies at its next write; everything else keeps running, and a job
+writes to a file, so every job survives (macOS arm64,
+`research/shutdown/crash-cleanup.md`). Fiber does not go looking for them: a
+resumed session marks each `orphaned` and "does not touch any process"
+(`docs/events.md`). Linux's `PR_SET_PDEATHSIG` reaches only the shell Fiber
+starts, not what the shell starts, and a recorded process group and start
+time cannot prove a group is still the one recorded, so neither is used. The
+gap is stated rather than half closed.
+
+A Fiber delegate whose parent died sees its client leave, finishes its turn
+and jobs, and exits ("Lifecycle"), so its own log is complete. Its parent's
+log still marks the job `orphaned` on resume, because the parent cannot
+know. An MCP call the delegate raises after that fails at once with
+`mcp_server_unavailable`, since nothing can answer it.
+
+**The terminal and the daemon.** The terminal starts its `fiber serve` in a
+new process session, so a closed window or a signal to the terminal reaches
+the terminal alone; the session is one client short and follows
+"Lifecycle". Stopping `fiber remote` ends its relays, and each session sees
+a client leave.
 
 ## Remote clients
 
@@ -324,5 +418,3 @@ supervisor that knows only about Fiber is worth less than one that does not.
 
 - The TUI's own shape, including whether it edits a queued steering message:
   [TUI: scrollback or full screen?](https://github.com/aakshintala/fiber/issues/15)
-- What SIGTERM guarantees:
-  [Shutdown: what SIGTERM has to guarantee](https://github.com/aakshintala/fiber/issues/34)

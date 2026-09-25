@@ -128,7 +128,8 @@ started with `isolation: worktree`. When one is removed or kept is
 **Sockets.** `run/<session_id>` is the local socket of a running session
 (`docs/invocation.md`, "Processes"), mode 0600 in a 0700 directory. The process
 holding that session's `session.lock` owns it: it removes any socket left by a
-dead process before binding, and nothing else removes one. It sits at the top of Fiber home
+dead process before binding, unlinks its own at exit, and nothing else removes
+one. It sits at the top of Fiber home
 because macOS limits a socket's path to 103 bytes (`sun_path[104]` in
 `sys/un.h`; binding at 104 fails, probed on Darwin 25.6.0), and a path under
 `projects/<key>/sessions/<id>/` exceeds that. Linux allows 107 (`unix(7)`, not
