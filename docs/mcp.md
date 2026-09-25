@@ -51,16 +51,15 @@ mid-session misses the whole prompt cache.
 
 ### Deferred tools
 
-A protocol with native deferral declares MCP tools deferred by default: the
-model sees each tool's name and loads its full definition when it needs it.
-Anthropic's `defer_loading` is the only one. Every other protocol declares every
-tool in full; OpenAI's `allowed_tools` restricts calls but still sends each
-definition. A server can be
-marked eager, so its tools are always declared in full.
+On a model that supports deferral, MCP tools are declared deferred by default:
+the model sees each tool's name and loads its full definition with
+`tool_search` when it needs it. On any other model every tool is declared in
+full; OpenAI's `allowed_tools` restricts calls but still sends each definition.
+A server can be marked eager, so its tools are always declared in full.
 
-Why deferral keeps the cache is `docs/prompt-cache.md`. Which tools the
-model sees in general is
-[Which tools the model sees, and when](https://github.com/aakshintala/fiber/issues/51).
+Why deferral keeps the cache is `docs/prompt-cache.md`. Which models defer,
+`tool_search`, and which tools the model sees in general are
+`docs/tools.md`, "Which tools the model sees".
 
 ## Effects
 

@@ -47,6 +47,8 @@ For each model:
 - compatibility flags the native protocol reads, such as whether the vendor
   accepts `store`, which field carries the token limit, and which thinking
   dialect it speaks
+- whether deferred tools work for it, declared only after a probe
+  (`docs/tools.md`, "Which tools the model sees")
 - extra request body fields
 - context window, output token limit, input kinds and cost
 

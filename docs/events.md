@@ -229,7 +229,7 @@ Behaviour is `docs/prompt-cache.md`.
 
 | Kind | Durable | Payload |
 |---|---|---|
-| `preamble_built` | yes | `reason` (`start`, `resume`, `reload`, `switch`), model, effort, thinking, `tool_choice`, cache lifetime, the system prompt text, and the tool definitions as sent |
+| `preamble_built` | yes | `reason` (`start`, `resume`, `reload`, `switch`), model, effort, thinking, `tool_choice`, cache lifetime, the system prompt text, and the tool definitions as sent, each marked whether it is deferred |
 | `model_changed` | yes | the model, effort, thinking and cache lifetime before and after the switch, and who asked for it |
 
 `preamble_built` follows `session_started` or `fiber_started`, `reloaded`, or

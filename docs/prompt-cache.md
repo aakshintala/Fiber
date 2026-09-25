@@ -85,12 +85,16 @@ reordering a definition misses the whole cache on every provider probed.
 
 ### Deferred tools
 
-On the Anthropic protocol, MCP tools are declared with `defer_loading`. A
-deferred tool sits outside the cached prefix, and the model loading one appends
-it to the conversation, so the cache holds. No other protocol has native
-deferral, so every other protocol declares every tool in full. OpenAI's
-`allowed_tools` restricts which tools may be called but still sends their
-definitions; it is not deferral.
+On a model that supports deferral, deferred tools are declared with
+`defer_loading`. A deferred tool sits outside the cached prefix, and the model
+loading one appends it to the conversation, so the cache holds. Anthropic and
+OpenAI Responses (gpt-5.4 and later) defer natively; OpenAI documents that
+"Tool search is designed to preserve the model's cache". Probed: on Muse, a
+request that loaded a deferred tool read 6,385 of its 6,980 input tokens from
+the cache. Which models defer and which tools are deferred is
+`docs/tools.md`, "Which tools the model sees". OpenAI's `allowed_tools`
+restricts which tools may be called but still sends their definitions; it is
+not deferral.
 
 ## Cache markers and keys
 
