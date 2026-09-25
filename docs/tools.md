@@ -226,8 +226,8 @@ that ticket's resolution holds the rationale and the rejected alternatives.
   drain bound). If output is still held open after that, for example by a
   descendant that escaped the group, Fiber stops reading and the result is
   `failed` with code `indeterminate`, never `completed`.
-- [Shutdown: what SIGTERM has to guarantee](https://github.com/aakshintala/fiber/issues/34)
-  uses the same two values.
+- A shutdown (`docs/invocation.md`, "Shutdown") uses the same two values, on
+  every group at once.
 
 ### Result and output
 
@@ -353,8 +353,8 @@ The kinds are `docs/events.md`.
   `failed` with code `indeterminate`, never `completed`. A stopped job ends
   `cancelled`.
 - Jobs live and die with the Fiber process. Nothing reattaches to a job after
-  a restart. Stopping every job at exit belongs to
-  [Shutdown: what SIGTERM has to guarantee](https://github.com/aakshintala/fiber/issues/34).
+  a restart. A shutdown stops every job (`docs/invocation.md`, "Shutdown"); a
+  crash stops none, and the jobs keep running unwatched.
 - When a session is about to end with jobs still running — a non-interactive
   run whose model has given its final answer, `close` or stdin EOF on
   `fiber serve`, or a delegate finishing its task — Fiber wakes the model
@@ -364,7 +364,7 @@ The kinds are `docs/events.md`.
   wakes the model. The session ends when it is idle with no jobs running.
   There is no cap on this wait: a hang is bounded at the command that hangs
   (the shell tool's timeout, "Timeout") and by the caller's SIGTERM
-  ([Shutdown: what SIGTERM has to guarantee](https://github.com/aakshintala/fiber/issues/34)),
+  (`docs/invocation.md`, "Shutdown"),
   because a cap on the waiter cannot tell a hang from long healthy work such
   as a CI watch.
 - There is no cap on running jobs, except that a session runs at most 10

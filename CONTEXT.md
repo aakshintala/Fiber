@@ -230,6 +230,12 @@ boundary rather than starting a new one. A steering message the turn ends
 before applying becomes the next turn's input.
 _Avoid_: follow-up, queued prompt, interjection
 
+**Shutdown**:
+Fiber stopping because a signal told it to: within a bound, stopping everything
+the session started, asking nobody anything. Distinct from exiting because the
+work ran out, which waits for jobs.
+_Avoid_: teardown, graceful exit, termination
+
 **Front door**:
 A way of starting Fiber. There are two: the terminal, and the non-interactive
 door. Which subcommand opened a door changes where its prompt comes from and

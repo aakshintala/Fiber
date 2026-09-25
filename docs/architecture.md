@@ -170,6 +170,7 @@ Fiber uses blocking threads and no async runtime.
 | loop | the turn: what happens next, and every durable event | the session |
 | one per client | that client's connection: its commands in, its events out | the connection |
 | one per running tool call | that call's subprocess and its output | the call |
+| signals | the process's SIGTERM, SIGINT and SIGHUP; it starts a shutdown (`docs/invocation.md`, "Shutdown") | the process |
 
 A client is a reader and a writer, and every client is the same code. Client
 zero is the process's own stdin and stdout; every connection to the session's

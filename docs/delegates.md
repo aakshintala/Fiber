@@ -179,8 +179,9 @@ The `job_*` kinds are unchanged. A delegate adds two kinds keyed by `job_id`, as
   the rule for a session about to end (`docs/tools.md`): it is woken once, then
   waited for.
 - Stopping a delegate (`jobs stop`, `job_stop`) stops its own jobs and delegates
-  as its shutdown does ([#34](https://github.com/aakshintala/fiber/issues/34)),
-  so a stop reaches every descendant.
+  as its shutdown does (`docs/invocation.md`, "Shutdown"), so a stop reaches
+  every descendant. Its parent waits for it to exit, up to the shutdown
+  bound, before sending SIGKILL.
 - Every delegate is a child process of the session that started it, whatever
   its harness. A Fiber delegate is a child `fiber serve`
   ([ADR 0009](adr/0009-each-session-is-one-process.md)): its prompt and
@@ -191,9 +192,11 @@ The `job_*` kinds are unchanged. A delegate adds two kinds keyed by `job_id`, as
   parent (`docs/mcp.md`, "Where servers run").
 - Stopping a Fiber delegate is a signal to its process group, as for any job
   (`docs/tools.md`, "Shell").
-- If a parent's process dies, its delegates die with it. Each one's log then
-  shows a start with no exit, and its job ends `orphaned`
-  (`docs/tools.md`, "Background jobs").
+- If a parent's process dies without a shutdown, its delegates keep running:
+  each sees its client leave, finishes its turn and jobs, and exits
+  (`docs/invocation.md`, "Lifecycle"). The parent's log marks each job
+  `orphaned` on resume (`docs/tools.md`, "Background jobs"), because the
+  parent cannot know.
 - A crash of any kind in a delegate, in Rust, Lua or SQLite, ends that
   delegate `failed` and nothing else.
 
