@@ -45,19 +45,20 @@ registering its name.
 
 The tool set is fixed at the session's first request. A resumed session lists
 its servers' tools again and fixes its tool set at its own first request. Tools
-are sorted by name, and only [reload](#reload) changes the set. Changing tool
-definitions mid-session misses the whole prompt cache.
+are sorted by name, with every schema's keys sorted (`docs/prompt-cache.md`,
+"Bytes"), and only [reload](#reload) changes the set. Changing tool definitions
+mid-session misses the whole prompt cache.
 
 ### Deferred tools
 
 A protocol with native deferral declares MCP tools deferred by default: the
 model sees each tool's name and loads its full definition when it needs it.
-Anthropic's `defer_loading` and OpenAI's `allowed_tools` are the two. A
-protocol without native deferral declares every tool in full. A server can be
+Anthropic's `defer_loading` is the only one. Every other protocol declares every
+tool in full; OpenAI's `allowed_tools` restricts calls but still sends each
+definition. A server can be
 marked eager, so its tools are always declared in full.
 
-How each protocol defers belongs to
-[Prompt cache](https://github.com/aakshintala/fiber/issues/33). Which tools the
+Why deferral keeps the cache is `docs/prompt-cache.md`. Which tools the
 model sees in general is
 [Which tools the model sees, and when](https://github.com/aakshintala/fiber/issues/51).
 
@@ -289,8 +290,6 @@ none: each top-level session starts its own.
 
 ## Not settled here
 
-- How each protocol defers tools:
-  [Prompt cache](https://github.com/aakshintala/fiber/issues/33)
 - How a person invokes a prompt template
 - Where a server's OAuth token is stored
 - How MCP content other than text and images, such as audio and resource

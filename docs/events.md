@@ -214,7 +214,7 @@ the reviewer, or the mode.
 
 | Kind | Durable | Payload |
 |---|---|---|
-| `usage_recorded` | yes | generation id, model, tokens, cost or `null` when unknown, `action_id` where it belongs to one |
+| `usage_recorded` | yes | generation id, model, tokens (uncached input, input read from the cache, input written to the cache by lifetime, output), cost or `null` when unknown, `action_id` where it belongs to one |
 | `retry_scheduled` | no | cause, attempt, delay |
 | `notice` | no | open-set `code` and message, for a failure outside any action |
 
@@ -222,6 +222,20 @@ One `usage_recorded` per model call, whatever started it. A cost that settles
 late is a second `usage_recorded` with the same generation id, replacing the
 first. Consumers sum; resume rebuilds the ledger by folding. No pending queue,
 no watermarks, no reconciliation file.
+
+### Preamble
+
+Behaviour is `docs/prompt-cache.md`.
+
+| Kind | Durable | Payload |
+|---|---|---|
+| `preamble_built` | yes | `reason` (`start`, `resume`, `reload`, `switch`), model, effort, thinking, `tool_choice`, cache lifetime, the system prompt text, and the tool definitions as sent |
+| `model_changed` | yes | the model, effort, thinking and cache lifetime before and after the switch, and who asked for it |
+
+`preamble_built` follows `session_started` or `fiber_started`, `reloaded`, or
+`model_changed`, before the next model request. A fork or a rewind sends the
+latest `preamble_built` before its point. `reason` is a closed set: adding a
+value is a breaking change.
 
 ### Handoff
 
@@ -252,8 +266,8 @@ Behaviour is `docs/mcp.md`.
 | `mcp_server_failed` | yes | the server's name, why it failed (did not start, missed its startup deadline, not logged in, died), and whether Fiber will restart it |
 | `reloaded` | yes | the servers kept, restarted, started and stopped, the extensions reloaded, and any server that failed, with why |
 
-`reloaded` is written once the new tool set is declared. The next model request
-misses the prompt cache.
+`reloaded` is written once the new tool set is declared, and `preamble_built`
+follows it. The next model request misses the prompt cache.
 
 ### Jobs
 
