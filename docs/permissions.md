@@ -84,6 +84,10 @@ exactly as in any other mode.
 
 ## The order a call is judged in
 
+A `before_tool` hook runs first. It may refuse a call or rewrite its
+arguments, and a rewritten call is classified again before this order judges
+it. A hook can never approve a call (`docs/extensions.md`, "Hooks").
+
 1. **The credential deny**: a call whose paths touch Fiber home's
    `credentials/` is refused, in every mode. See [Credentials](#credentials).
 2. **A standing deny** matching this call: refused. No model call, no question.

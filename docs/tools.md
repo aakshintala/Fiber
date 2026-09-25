@@ -38,6 +38,11 @@ judged is `docs/permissions.md`; the events themselves are `docs/events.md`.
 - An effects function that itself errors (for example a bug in an extension)
   fails closed: the call completes as `failed` with code `tool_error` and never
   runs.
+- A `before_tool` hook then sees the call and may rewrite its arguments or
+  refuse it (`docs/extensions.md`, "Hooks"). Rewritten arguments go through
+  the schema check and the effects function again. The model's call is sent
+  back to it as written, and the result's `content` begins with a line giving
+  the arguments that ran.
 
 ## What a result carries
 
@@ -45,16 +50,16 @@ judged is `docs/permissions.md`; the events themselves are `docs/events.md`.
 (defined in `docs/events.md`):
 
 - `content`: text and image parts. It is exactly what the model is sent,
-  including after an after-tool hook has rewritten it. The hook's timing
-  belongs to
-  [Hook points: what a hook can see and change](https://github.com/aakshintala/fiber/issues/48);
-  this page only requires the completed line to be written after it.
+  including after an `after_tool` hook has rewritten it. The hook runs on the
+  full output before the cut, so the completed line and the artifact both hold
+  what the hook returned (`docs/extensions.md`, "Hooks").
 - `details`: JSON for clients, such as an edit's diff for the terminal to draw.
   It is never sent to the model and the loop never reads it. A client that does
   not recognise a tool's `details` shows `content` instead: tool identity is an
   opaque name and an extension can replace any tool, so no client may depend
   on one tool's `details`.
-- `artifact`: the path to the full output, present only when the result was cut.
+- `artifact`: the path to the full output, present when the result was cut or
+  when an `after_tool` hook returned text for the artifact.
 - `control`: instructions to the loop, absent on most results. The one field
   defined is `handoff`, a handoff note: the loop restarts the model's context
   from it at the step boundary (`docs/handoff.md`). Any tool may set it; the
@@ -510,8 +515,6 @@ Claude Code's opt-in automatic mode starts deferring tools.
   [Revisit: may a tool that never finished be re-run after a crash?](https://github.com/aakshintala/fiber/issues/40)
 - Each tool's own design: the tickets indexed in
   [Epic: tools](https://github.com/aakshintala/fiber/issues/59).
-- When a hook runs and what it may change:
-  [Hook points](https://github.com/aakshintala/fiber/issues/48).
 - Confinement:
   [Does Fiber confine what tools can touch?](https://github.com/aakshintala/fiber/issues/30)
 - Delegates are `docs/delegates.md`, which lists what it leaves open.

@@ -76,9 +76,10 @@ metadata anywhere, models.dev included. A vendor with no listing endpoint ships 
 static list instead.
 
 This is the only Lua a provider runs. It never runs on the request path.
-Transforms that apply to every request, such as redacting secrets, are hooks,
-and belong to
-[Hook points: what a hook can see and change](https://github.com/aakshintala/fiber/issues/48).
+Nothing transforms a request on its way to a provider. A transform such as
+redacting secrets runs where the text enters the session, in the
+`before_message` and `after_tool` hooks (`docs/extensions.md`, "Hooks"), so
+the secret never reaches the log or any request.
 
 ## Naming a model
 
