@@ -121,7 +121,7 @@ over a native wire protocol; see `docs/model-routing.md` and
 
 "here is what is about to happen: allow it, change it, or refuse it."
 Synchronous: the loop stops, asks, waits and honours the answer, under a
-timeout Fiber enforces. Whether an extension runtime is in-process or a
+timeout Fiber enforces. The hook points are `docs/extensions.md`, "Hooks". Whether an extension runtime is in-process or a
 subprocess is [issue #11](https://github.com/aakshintala/fiber/issues/11)'s
 decision; whatever it picks must be able to answer synchronously inside a
 turn.

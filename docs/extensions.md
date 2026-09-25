@@ -89,7 +89,7 @@ json.decode(str) / json.encode(value)   -- JSON, host-provided (Lua has none bui
 ```
 fiber.tool(name, { description, input_schema, run })
 fiber.provider(name, { models })
-fiber.hook(event, handler)
+fiber.hook(point, { on_failure, run })
 ```
 
 An extension can make HTTP requests, read declared secrets, hold state across
@@ -137,7 +137,129 @@ disk and refreshes it in the background at startup. The function never runs
 while a request is being sent.
 
 Writing a tool or a hook has the same shape: register a name, receive a call, do
-pure work plus host calls, return.
+pure work plus host calls, return. The hook points are [Hooks](#hooks).
+
+## Hooks
+
+A hook is asked at a fixed point in a session and may change what happens
+there. Fiber has seven hook points. Each one runs before the thing it changes
+is written to the session log or sent to the model, never after. That one rule
+keeps two settled promises: the log holds exactly what happened
+([ADR 0001](adr/0001-session-log-is-the-only-state-of-record.md)), and no hook
+rewrites a message the model has already been sent (`docs/prompt-cache.md`,
+"Rules for other areas").
+
+A hook only changes things. Something that only needs to know what happened,
+such as a job that writes a worklog when a session ends, is a watcher: it reads
+the event stream (`docs/events.md`) and has no hook point. How an extension
+subscribes to the event stream is not yet specified.
+
+### The hook points
+
+| Hook point | When it runs | What the hook sees | What it may return |
+|---|---|---|---|
+| `session_start` | A session starts, resumes, forks or rewinds, before the first model request | why it started, the session's id and workspace root | context to add |
+| `before_message` | A person's or a driver's message arrives, as a turn's input or as steering, before it is logged | the message's text and images | a replacement message, a refusal with a reason, context to add |
+| `turn_start` | A turn has started, before its first model request | the turn's input and what started it | context to add |
+| `before_tool` | A call has passed its schema check and its effects function, before permission is decided | the tool's name, the arguments, the declared effects, paths and reversibility | replacement arguments, a refusal with a reason |
+| `after_tool` | A call that ran has returned, before its output is cut, its artifact is written or it is logged | the tool's name, the arguments, `status`, the full output, `details`, `process` | replacement `content`, replacement `details`, text for the artifact |
+| `turn_end` | The model has replied without calling a tool, so the turn would complete, before `turn_completed` is written | the model's final reply | a message to continue the turn with |
+| `before_handoff` | A handoff has started, before the note request | the trigger, the person's instructions, and the conversation as the model would be sent it | a handoff note |
+
+Returning nothing leaves things as they were.
+
+**Context** a hook adds is appended to the conversation as its own message and
+logged as `context_added`, naming the extension. An extension that delivers an
+inbox of messages from other agents does it this way, at `session_start` or
+`turn_start`.
+
+**`before_message`** covers every message a person or a driver sends, so a
+secret pasted into a prompt can be removed before anything records it. A
+refused message is neither logged nor sent, and the sender is told why.
+
+**`before_tool`** may rewrite a call or refuse it, but never approve one.
+Approval is the permission decision's (`docs/permissions.md`), and a mode is
+never changed by an extension. Fiber checks rewritten arguments against the
+tool's schema and runs its effects function again, so the permission decision
+judges the call that will run, not the one the model asked for. A refused call
+completes `denied` with reason `hook` and the extension's name, and never
+starts.
+
+**`after_tool`** runs on every call that ran: `completed`, `failed` and
+`cancelled` alike, since a cancelled command's partial output can hold a
+secret too. It does not run on a call that never started. What the hook
+returns is what the rest of the pipeline sees: the size cap applies to the
+returned `content` (`docs/tools.md`, "Bounded results"), and the artifact holds
+the hook's artifact text when it returns one, or the returned output when it
+does not. So a redaction hook removes a secret from the model's view and from
+disk in one pass, and the original output is never stored. An extension that
+compacts build and test output returns a short summary as `content` and the
+full log as the artifact text. The hook cannot change `status`: whether a call
+succeeded is the tool's answer.
+
+**`turn_end`** runs only when a turn would complete normally, not when it is
+cancelled or fails. A returned message joins the turn at the step boundary as a
+steering message would, and is logged as `steering_applied` with the extension
+as its source. The model then takes another step, and `turn_end` runs again
+when that step ends without a tool call. Fiber puts no limit on how often a
+hook continues a turn. An extension that does this should keep its own limit,
+and a person can always end the turn with the cancel key. A goal that keeps the
+agent working until a condition is met is built on this point.
+
+**`before_handoff`** lets an extension write the handoff note instead of the
+session's own model. When a hook returns a note, Fiber makes no note request.
+When none does, Fiber makes its own (`docs/handoff.md`, "The handoff note").
+
+### When several hooks share a point
+
+Hooks at the same point run one after another, ordered by extension name and
+then by the order each extension registered them. Each hook sees what the one
+before it returned. A refusal ends the chain. The order is fixed so that the
+same inputs give the same result on every run.
+
+### When a hook fails
+
+Every hook declares `on_failure` when it registers, as `blocking` or
+`non-blocking`. There is no default, and a hook that declares neither is not
+registered.
+
+- **`non-blocking`**: if the hook errors or runs out of time, Fiber drops its
+  change, carries on as if it had returned nothing, and gives a `notice` naming
+  the extension. A formatter is `non-blocking`.
+- **`blocking`**: if the hook errors or runs out of time, the thing it guards
+  does not happen. A secret scanner is `blocking`, because carrying on without
+  it would send the secret.
+
+What a `blocking` failure stops, at each point:
+
+| Hook point | What happens |
+|---|---|
+| `session_start` | The session does not start. Fiber exits with error `hook_failed`, naming the extension. |
+| `before_message` | The message is neither logged nor sent, and the sender gets `hook_failed`. |
+| `turn_start` | The turn completes `failed` with code `hook_failed`, before any model request. |
+| `before_tool` | The call completes `failed` with code `hook_failed` and never starts. |
+| `after_tool` | The call completes `failed` with code `hook_failed`. Its only content is a line telling the model which extension failed, and no artifact is written. The call did run, and the log shows it. |
+| `turn_end` | The turn completes `failed` with code `hook_failed`. |
+| `before_handoff` | The handoff completes `failed` with code `hook_failed`, as a failed note request does. |
+
+### What a hook cannot do
+
+- Change a message the model has already been sent, the system prompt or the
+  tool definitions.
+- Approve a tool call, or change a call's `status`.
+- Run during a shutdown. When a signal stops Fiber, no hook runs
+  (`docs/invocation.md`, "Shutdown").
+
+### Recording a change
+
+The log holds what a hook returned, never what it was given. Each line a hook
+changed names the extensions that changed it in `changed_by`, so a reader can
+see that a message or result was rewritten and by whom (`docs/events.md`).
+
+Handing a value to a hook and taking its answer back is cheap next to the
+hook's own work. A 16 KiB tool result crosses into Lua and back in under
+10 µs, and a 1 MiB one in about 50 µs (macOS arm64,
+[research/hook-conversion-cost](../research/hook-conversion-cost/README.md)).
 
 ## Loading, and cost when nothing is loaded
 

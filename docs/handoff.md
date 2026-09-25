@@ -150,6 +150,10 @@ That is why the last step's results are what gets moved out.
 
 ## The handoff note
 
+An extension can write the note instead, through a `before_handoff` hook
+(`docs/extensions.md`, "Hooks"). When one does, no note request is made, and
+`handoff_completed` carries the note's text and the extension's name.
+
 The note is written so a fresh agent can continue the work. It:
 
 - refers to specs, issues, commits, files, artifacts and searches of the

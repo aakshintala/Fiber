@@ -179,8 +179,9 @@ A cache entry also expires after its lifetime with no request.
 
 ## Rules for other areas
 
-- Hooks: no hook rewrites a message the model has already been sent.
-  [Hook points](https://github.com/aakshintala/fiber/issues/48) applies this.
+- Hooks: no hook rewrites a message the model has already been sent. Every
+  hook point changes content before it is logged (`docs/extensions.md`,
+  "Hooks").
 - The reviewer has its own cache. Its prompt is fixed instructions, then the
   person's messages and the tool calls in log order, then the call under review.
 - The system prompt puts what is fixed for the session first. System prompt

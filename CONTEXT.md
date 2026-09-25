@@ -159,7 +159,15 @@ _Avoid_: interface, plugin point, API
 **Hook**:
 A participant asked before or after something happens, which may allow it,
 change it or refuse it. Distinct from a tool, which is asked to do work, and a
-provider, which is asked for a model's response.
+provider, which is asked for a model's response. A hook only changes things;
+something that only needs to know what happened is a watcher. See
+`docs/extensions.md`.
+
+**Hook point**:
+One of the fixed places in a session where hooks are asked, such as
+`before_tool` or `turn_end`. Each runs before what it changes is logged or sent
+to the model.
+_Avoid_: hook event, lifecycle event
 
 **Extension**:
 A package Fiber installs and loads, registering tools, providers and hooks

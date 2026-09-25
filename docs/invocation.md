@@ -306,6 +306,8 @@ knows and exits.
   "Calls"); a pending elicitation goes with its call. Then each stdio
   server's stdin is closed and it gets SIGTERM, then SIGKILL 800 ms later.
 - No model request is made, no ending notice is given, and no hook runs.
+  Because no `after_tool` hook runs to redact it, a call cancelled by shutdown
+  completes with no content and no artifact.
 
 **What is written.** The turn in flight ends as the cancel key ends it
 (`docs/architecture.md`, "Cancellation"): each tool call completes

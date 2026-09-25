@@ -134,6 +134,7 @@ as soon as a delegate relays its own messages onto the same stdout.
 | `turn_started` | yes | the input that started it; for a turn started by jobs, a source naming those `job_id`s |
 | `turn_completed` | yes | `outcome` (`completed`, `interrupted`, `failed`), `error` on failure |
 | `steering_applied` | yes | the text a running turn received at a step boundary, and where it came from |
+| `context_added` | yes | the text a hook added to the conversation, the extension's name and the hook point (`docs/extensions.md`, "Hooks") |
 
 A **steering message** — input sent while a turn is running — joins that turn
 at its next step boundary, and `steering_applied` is how the log shows what
@@ -162,7 +163,8 @@ durable.
 - `tool_call_started` — execution began, wherever it runs, including a
   provider-hosted tool the provider reports as in progress. Carries the call's
   declared effects, whether it is reversible, and its paths, where the tool
-  declared them (`docs/permissions.md`, "Effects").
+  declared them (`docs/permissions.md`, "Effects"). When a `before_tool` hook
+  rewrote the arguments, it also carries the arguments that ran.
 - `tool_call_delta` — streamed output and progress. Ephemeral.
 - `tool_call_completed` — outcome.
 
@@ -185,6 +187,13 @@ separate error channel, so no failure is ever reported twice.
 
 An unknown `error.code` is a generic failure and an unknown `reason` is a
 generic denial; the consumer shows the message. Adding either value is additive.
+
+A line whose content a hook changed carries `changed_by`, the names of the
+extensions that changed it, in the order they ran. It appears on
+`tool_call_started` for rewritten arguments, on `tool_call_completed` for a
+rewritten result, and on `turn_started` and `steering_applied` for a rewritten
+message. The line holds what the hook returned; the original is never logged
+(`docs/extensions.md`, "Hooks").
 
 A call stopped by Fiber or the user is `cancelled`, not a signal failure. An
 interrupt is not a crash.
@@ -244,12 +253,12 @@ Behaviour is `docs/handoff.md`.
 | Kind | Durable | Payload |
 |---|---|---|
 | `handoff_started` | yes | `trigger` (`auto`, `person`, `overflow`, `tool`); written before the note request, and not written for a tool-started handoff, which makes none |
-| `handoff_completed` | yes | `outcome` (`completed`, `failed`, `cancelled`), `error { code, message }` on failure, `note` (the `action_id`s of the actions carrying the note, in call order), `tokens_before`, and the person's `instructions` when there were any |
+| `handoff_completed` | yes | `outcome` (`completed`, `failed`, `cancelled`), `error { code, message }` on failure, `note` (the `action_id`s of the actions carrying the note, in call order), `tokens_before`, and the person's `instructions` when there were any; for a note a `before_handoff` hook wrote, `note_text` and the extension's name in place of `note` |
 | `context_nudged` | yes | `tokens`, the context size when the nudge was given, and `trigger_at`, the size at which an automatic handoff runs |
 
 The note request is an ordinary assistant message action with its own
 `usage_recorded`. `handoff_completed` points at the note and never copies its
-text ("Writing"). `outcome` is a closed set: adding a value is a breaking
+text ("Writing"), except a note a hook wrote, which appears on no earlier line. `outcome` is a closed set: adding a value is a breaking
 change. `context_nudged` is durable because the model saw it; the nudge's text
 is generated from its payload.
 
