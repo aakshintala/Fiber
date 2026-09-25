@@ -8,13 +8,18 @@
 # ~4.5 MiB of RSS before it runs a line of code.
 set -eu
 cd "$(dirname "$0")"
-FEATURES="serde_json ureq ratatui rusqlite mlua clap thiserror signal-hook getrandom base64 ring rustix regex ignore similar pulldown-cmark syntect"
+FEATURES="serde_json ureq ratatui crossterm rusqlite mlua clap thiserror signal-hook getrandom base64 ring rustix regex ignore similar pulldown-cmark jsonschema syntect"
+# Every crate in the runtime table of docs/dependencies.md, built together.
+RUNTIME="serde_json ureq ratatui crossterm rusqlite mlua clap thiserror signal-hook getrandom base64 ring rustix"
 
+# crossterm needs a terminal, so every binary runs under script(1), which
+# gives it a pseudo-terminal. time(1) runs inside it and measures only the
+# probe binary.
 peak_kib() {
   if [ "$(uname)" = Darwin ]; then
-    /usr/bin/time -l "$1" 2>&1 >/dev/null | awk '/peak memory footprint/ {print int($1 / 1024)}'
+    script -q /dev/null /usr/bin/time -l "$1" </dev/null 2>&1 | tr -d '\r' | awk '/peak memory footprint/ {print int($1 / 1024)}'
   else
-    /usr/bin/time -v "$1" 2>&1 >/dev/null | awk -F': ' '/Maximum resident set size/ {print $2}'
+    script -qec "/usr/bin/time -v $1" /dev/null </dev/null 2>&1 | tr -d '\r' | awk -F': ' '/Maximum resident set size/ {print $2}'
   fi
 }
 
@@ -40,3 +45,7 @@ for f in $FEATURES; do
   kib=$(median "$bin")
   echo "| $f | $kib | $((kib - base)) | $(( $(wc -c < "$bin") / 1024 )) |"
 done
+all=$(echo $RUNTIME | tr ' ' ',')
+bin=$(build runtime "$all")
+kib=$(median "$bin")
+echo "| all runtime crates together | $kib | $((kib - base)) | $(( $(wc -c < "$bin") / 1024 )) |"

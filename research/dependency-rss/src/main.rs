@@ -21,8 +21,10 @@ fn main() {
     }
     #[cfg(feature = "ureq")]
     {
-        // One real HTTPS request: loads the OS trust store and runs a handshake.
-        let body = ureq::get("https://example.com").call().unwrap().into_body().read_to_string().unwrap();
+        // One real HTTPS request through the OS trust store, as Fiber is configured.
+        let tls = ureq::tls::TlsConfig::builder().root_certs(ureq::tls::RootCerts::PlatformVerifier).build();
+        let agent: ureq::Agent = ureq::Agent::config_builder().tls_config(tls).build().into();
+        let body = agent.get("https://example.com").call().unwrap().into_body().read_to_string().unwrap();
         black_box(body);
     }
     #[cfg(feature = "ratatui")]
@@ -33,6 +35,36 @@ fn main() {
         for _ in 0..10 {
             t.draw(|f| f.render_widget(Paragraph::new(s.as_str()), f.area())).unwrap();
         }
+    }
+    #[cfg(feature = "crossterm")]
+    {
+        // Needs a terminal: run.sh runs this one under script(1).
+        use crossterm::{event, terminal};
+        terminal::enable_raw_mode().unwrap();
+        let (w, h) = terminal::size().unwrap();
+        while event::poll(std::time::Duration::from_millis(50)).unwrap() {
+            black_box(event::read().unwrap());
+        }
+        terminal::disable_raw_mode().unwrap();
+        black_box((w, h));
+    }
+    #[cfg(feature = "jsonschema")]
+    {
+        // A tool input schema of the shape Fiber's built-ins declare.
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "minLength": 1 },
+                "offset": { "type": "integer", "minimum": 0 },
+                "limit": { "type": "integer", "minimum": 1 },
+                "mode": { "enum": ["read", "write"] }
+            },
+            "required": ["path"],
+            "additionalProperties": false
+        });
+        let v = jsonschema::validator_for(&schema).unwrap();
+        black_box(v.is_valid(&serde_json::json!({ "path": "src/main.rs", "offset": 10 })));
+        black_box(v.iter_errors(&serde_json::json!({ "path": 3, "x": 1 })).count());
     }
     #[cfg(feature = "rusqlite")]
     {
