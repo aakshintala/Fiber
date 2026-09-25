@@ -10,7 +10,7 @@ are `docs/architecture.md`. Which CI jobs run on which runners is
 [CI](https://github.com/aakshintala/fiber/issues/62). Latency, memory and
 storage budgets are
 [Performance budgets](https://github.com/aakshintala/fiber/issues/67). No
-test asserts on time.
+test asserts a performance timing or sleeps to get a correct result.
 
 ## Levels
 
@@ -37,6 +37,11 @@ Tests are Rust, run by cargo. There is no second test language.
 A test asserts on what a consumer sees, as `docs/events.md` rules: "the lines
 and the file left behind". Code no consumer sees is tested through its crate's
 public API.
+
+Every promise a `docs/<area>.md` page makes is tested at the level where a
+consumer observes it. A security boundary, such as the credential deny or a
+permission denial, is tested at binary level: the call is refused, it never
+starts, and no protected bytes reach the output or an artifact.
 
 ### Event streams
 
@@ -70,8 +75,12 @@ and comparing the whole in-memory screen (ratatui's `TestBackend`) against a
 stored snapshot. CI never writes a snapshot: a changed screen fails and shows
 the difference, and an accepted change appears in the pull request.
 
-A few tests run the real binary in a pseudo-terminal, only for what memory
-cannot show: raw mode, resize, and the terminal restored on exit.
+Input is tested the same way: key presses are fed to the TUI's input handling,
+and the test asserts the commands it sends to the session.
+
+A few tests run the real binary in a pseudo-terminal, for what memory cannot
+show: raw mode, resize, the terminal restored on exit, and one journey that
+types a prompt, sees the answer and cancels a turn.
 
 ### Invariants
 
@@ -79,10 +88,15 @@ The `log` and `loop` crates carry property tests: generated sequences, shrunk
 to a minimal failing case and replayable by seed, checked against each crate's
 stated invariants rather than a fixed expected output. For example:
 
-- `log`: durable output equals the log; a session killed at a random point
-  reopens intact
+- `log`: durable output equals the log; a session killed at each fsync
+  boundary, or after a half-written line, reopens intact, and a tool call whose
+  fate is unknown is never run again
 - `loop`: no turn is lost; nothing a cancelled call produces is admitted after
-  the cancel, including when cancel races a tool result
+  the cancel; results return in request order
+
+Races are forced, not waited for. Tests use barriers to put competing events in
+each order that matters, such as a cancel arriving before, during and after a
+tool result.
 
 ## Model calls
 
@@ -98,10 +112,36 @@ tests come from two sources:
   recording cannot produce on demand, such as a tool call, then a 429, then
   text. A local fake server serves them to the binary and to cross-crate tests.
 
+The fake server also records every request it receives, and tests assert on
+it: the path, the headers with credentials masked, and the body bytes. This is
+how a test proves the prompt-cache rule that "two requests built from the same
+inputs are the same bytes" (`docs/prompt-cache.md`), across turns, resume and
+fork.
+
 The five first-party provider extensions are tested in Fiber's CI, loaded into
 the built binary by local path: against their vendor's recorded streams and
 against scripted streams. A protocol change that breaks a shipped provider
 fails the pull request that caused it.
+
+## Fakes
+
+Anything outside Fiber that a test needs is a shared fake. A Fiber delegate
+is a real child `fiber serve`, because it is Fiber. The fakes are:
+
+- a provider server serving recorded and scripted streams, and recording
+  requests
+- MCP servers for both transports, stdio and streamable HTTP
+- child processes that misbehave on purpose: ignore SIGTERM, leave descendants,
+  escape their process group
+- a fixture Lua extension that registers a tool, a provider and each hook
+- a scripted foreign harness, standing in for a delegate that is not Fiber
+- a local OAuth token endpoint
+- a second client on a session's socket, including a slow watcher
+
+The concrete scenarios each area needs are that area's acceptance criteria,
+written when its implementation tickets are.
+
+## Live calls and evals
 
 Tests that need live credentials are opt-in by environment variable and never
 run in CI.
@@ -121,25 +161,36 @@ against each one. An edit that no test notices fails CI.
 An edit that genuinely changes no behaviour is exempted in the code, with a
 written reason. How many runners share the mutants is CI's to set.
 
-Diff-scoped mutation testing cannot see a change in one place leaving other
-code under-tested, and a diff that changes only test code runs no mutants.
+A bug fix must also show that its test reproduces the bug. For a pull request
+marked as a bug fix, CI runs its new and changed tests against the base commit,
+and at least one must fail there.
+
+Diff-scoped mutation testing has two known limits. It cannot see a change in
+one place leaving other code under-tested. A pull request that changes only
+test code runs no mutants, so a rewritten test could lose its teeth unnoticed
+until the next code change in that crate runs mutants against it.
 
 ## Running tests
 
-Tests run under cargo-nextest. Each test runs in its own process, so a leaked
-child or a wedged test cannot affect the next one. A filter that matches no
+Tests run under cargo-nextest. Each test runs in its own process and is killed
+past its timeout. That does not contain what the test starts: a binary-level
+test runs Fiber in its own process group, and at the end it asserts that no
+child of its own remains, including after a timeout. A filter that matches no
 tests fails: nextest exits 4 with "no tests to run", where `cargo test` prints
 "0 passed" and exits 0. Doc-tests run under `cargo test --doc`.
 
-Every test runs on all three release targets. A test that applies to one
-platform is compiled only for that platform, never skipped at runtime.
+Every portable test runs on all three release targets. A test that applies to
+one platform is compiled only for that platform, never skipped at runtime. CI
+reports the number of tests run on each target, so an empty suite cannot pass.
 
 Each test uses its own temporary directory and checks only its own processes
 and files, never a machine-wide count.
 
 ### Waits and timeouts
 
-A test waits for a named signal: an event, or a file that exists. It never
+A test waits for the signal that proves the operation it needs: a socket
+accepting a connection, an MCP server's tools listed, an artifact finished and
+its completion event logged. A file existing is not that proof. A test never
 waits for a generic sign that things have settled, because "the screen stopped
 changing" is not "the server is listening".
 
@@ -150,8 +201,9 @@ test's own deadlines, so a hang reports which wait expired, not a harness kill.
 ### Flaky tests
 
 A failed binary-level test retries once. A pass on retry does not block the
-merge, but CI reports it, and it must map to a flake issue. A flake issue
-closes when the test is rewritten to be deterministic, never by rerunning.
+merge. CI opens a flake issue naming the test and its first failure, or
+comments on the open one. A flake issue closes when the test is rewritten to be
+deterministic, never by rerunning.
 
 Crate-level and cross-crate tests never retry: they are deterministic, so a
 failure there is signal.
@@ -161,7 +213,7 @@ failure there is signal.
 - **Any change:** the mutation check passes, and every behaviour a crate
   exposes has a public-API test.
 - **A bug fix:** a test that reproduces the report at the level it was
-  observed and fails on the code before the fix. A bug seen on screen gets a
+  observed and fails on the code before the fix, which CI checks. A bug seen on screen gets a
   screen test; a bug in the JSON lines gets a binary-level test.
 - **A new event kind:** a binary-level test in which a consumer sees it.
 - **A breaking log format change:** its migration and the migration's test
