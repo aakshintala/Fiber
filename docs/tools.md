@@ -40,7 +40,9 @@ judged is `docs/permissions.md`; the events themselves are `docs/events.md`.
   runs.
 - A `before_tool` hook then sees the call and may rewrite its arguments or
   refuse it (`docs/extensions.md`, "Hooks"). Rewritten arguments go through
-  the schema check and the effects function again.
+  the schema check and the effects function again. The model's call is sent
+  back to it as written, and the result's `content` begins with a line giving
+  the arguments that ran.
 
 ## What a result carries
 

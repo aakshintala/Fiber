@@ -89,7 +89,7 @@ json.decode(str) / json.encode(value)   -- JSON, host-provided (Lua has none bui
 ```
 fiber.tool(name, { description, input_schema, run })
 fiber.provider(name, { models })
-fiber.hook(point, { on_failure, run })
+fiber.hook(point, { on_failure, timeout, run })
 ```
 
 An extension can make HTTP requests, read declared secrets, hold state across
@@ -152,7 +152,8 @@ rewrites a message the model has already been sent (`docs/prompt-cache.md`,
 A hook only changes things. Something that only needs to know what happened,
 such as a job that writes a worklog when a session ends, is a watcher: it reads
 the event stream (`docs/events.md`) and has no hook point. How an extension
-subscribes to the event stream is not yet specified.
+watches is
+[Extension watchers](https://github.com/aakshintala/fiber/issues/101).
 
 ### The hook points
 
@@ -171,7 +172,9 @@ Returning nothing leaves things as they were.
 **Context** a hook adds is appended to the conversation as its own message and
 logged as `context_added`, naming the extension. An extension that delivers an
 inbox of messages from other agents does it this way, at `session_start` or
-`turn_start`.
+`turn_start`. `session_start` runs again on every resume, and each time its
+context is appended again. The hook sees why the session started, so an
+extension that must not repeat itself adds only what is new.
 
 **`before_message`** covers every message a person or a driver sends, so a
 secret pasted into a prompt can be removed before anything records it. A
@@ -184,6 +187,13 @@ tool's schema and runs its effects function again, so the permission decision
 judges the call that will run, not the one the model asked for. A refused call
 completes `denied` with reason `hook` and the extension's name, and never
 starts.
+
+The model's call is sent back to it exactly as the model wrote it. What ran is
+stated in the result instead: Fiber begins the result's `content` with a line
+naming the extension and giving the arguments that ran. That line is part of
+`content`, so the tool's size cap applies to it. Editing the model's own call
+would tell the model it asked for something it did not, and a provider that
+signs the reasoning before a call may reject the edited request.
 
 **`after_tool`** runs on every call that ran: `completed`, `failed` and
 `cancelled` alike, since a cancelled command's partial output can hold a
@@ -212,16 +222,23 @@ When none does, Fiber makes its own (`docs/handoff.md`, "The handoff note").
 
 ### When several hooks share a point
 
-Hooks at the same point run one after another, ordered by extension name and
-then by the order each extension registered them. Each hook sees what the one
-before it returned. A refusal ends the chain. The order is fixed so that the
-same inputs give the same result on every run.
+Hooks at the same point run one after another. Configuration can set the
+order of extensions at each hook point. Extensions it does not name run after
+those it does, ordered by name, and one extension's hooks at the same point run
+in the order it registered them. Each hook sees what the one before it
+returned. A refusal ends the chain. The order is fixed so that the same inputs
+give the same result on every run.
 
 ### When a hook fails
 
-Every hook declares `on_failure` when it registers, as `blocking` or
-`non-blocking`. There is no default, and a hook that declares neither is not
-registered.
+Every hook declares two things when it registers, and neither has a default.
+A hook that leaves either out is not registered.
+
+- `timeout`: how long it may run. Its author knows whether it only computes or
+  calls a web service or a model. Configuration can override the timeout for
+  any extension. A hook past its timeout is stopped ("When an extension
+  misbehaves") and has failed.
+- `on_failure`: `blocking` or `non-blocking`.
 
 - **`non-blocking`**: if the hook errors or runs out of time, Fiber drops its
   change, carries on as if it had returned nothing, and gives a `notice` naming
@@ -238,7 +255,7 @@ What a `blocking` failure stops, at each point:
 | `before_message` | The message is neither logged nor sent, and the sender gets `hook_failed`. |
 | `turn_start` | The turn completes `failed` with code `hook_failed`, before any model request. |
 | `before_tool` | The call completes `failed` with code `hook_failed` and never starts. |
-| `after_tool` | The call completes `failed` with code `hook_failed`. Its only content is a line telling the model which extension failed, and no artifact is written. The call did run, and the log shows it. |
+| `after_tool` | The call keeps the status the tool reported, since it ran. Its only content is a line saying its output was withheld because the extension's hook failed, and no artifact is written. |
 | `turn_end` | The turn completes `failed` with code `hook_failed`. |
 | `before_handoff` | The handoff completes `failed` with code `hook_failed`, as a failed note request does. |
 
@@ -286,7 +303,8 @@ extension's VM is created again the next time it is invoked.
 - **It errors.** A Lua error is caught at the call boundary. The extension's call
   fails; the session survives and the VM stays usable. Errors carry the
   extension's filename and line.
-- **It loops or hangs.** Hooks answer under a timeout. Enforcement is a two-stage
+- **It loops or hangs.** Each hook answers under the timeout it declared
+  ("When a hook fails"). Enforcement is a two-stage
   interrupt: a cheap instruction hook normally, escalating to fire on every
   instruction once the deadline passes, so an extension cannot swallow the
   deadline with `pcall`. Measured in `research/extension-runtime/pass1/`.
