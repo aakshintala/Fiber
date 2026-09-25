@@ -406,12 +406,108 @@ Four kinds ship as extensions:
   "Harnesses"). What a harness extension declares belongs to
   [Harness extensions: running another agent as a delegate](https://github.com/aakshintala/fiber/issues/77).
 
+## Which tools the model sees
+
+Settled by
+[Which tools the model sees, and when](https://github.com/aakshintala/fiber/issues/51);
+that ticket's resolution holds the rationale and the rejected alternatives.
+
+Every tool is declared on every request, in full or deferred. A deferred tool
+is sent as its name only. The model loads its full definition when it needs
+it, and the definition is appended to the conversation, so the cached prefix
+holds (`docs/prompt-cache.md`, "Deferred tools"). The tool set, and which of
+its tools are deferred, change only when the preamble is built.
+
+### Deferral is a property of the model
+
+- A model's provider data says whether deferral works for it
+  (`docs/model-routing.md`). It says so only after a probe shows a deferred
+  tool loading through that provider, because support varies within a
+  protocol: probed on September 24, 2026, Muse's `openai-responses` endpoint
+  deferred and kept the cache, while OpenRouter's accepted the same request for
+  GPT-6 Luna, sent every definition in full and let the model call a deferred
+  tool without loading it.
+- Anthropic and OpenAI Responses (gpt-5.4 and later) both defer natively.
+  `openai-completions` and `google-generative-ai` do not.
+- On a model without deferral, every tool is declared in full and
+  `tool_search` is not declared.
+
+### What is deferred by default
+
+- Every tool declares whether it is deferred by default. Configuration can
+  override that for any tool, and an MCP server can be marked eager
+  (`docs/mcp.md`).
+- MCP tools and `mcp_resources` are deferred by default. Every other built-in
+  is declared in full.
+- A built-in is deferred by default only when it is used in under about 2% of
+  the owner's sessions and is not part of how they direct delegates. Measured
+  on September 25, 2026, across 686 pi sessions, 171 Claude Code sessions and
+  143 Claude Code subagent sessions, no built-in except `mcp_resources` meets
+  that. Web fetch, the rarest candidate, is used in 1% of pi sessions but 11%
+  of Claude Code sessions.
+- Deferring has a cost. Claude Code defers widely, and its tool search runs in
+  48% of those Claude Code sessions.
+
+### Tool search
+
+- `tool_search` is a built-in tool the model calls to load deferred tools. It
+  is declared, in full, only when the model supports deferral and at least one
+  tool is deferred.
+- Fiber runs the search itself, as codex does: BM25 over each deferred tool's
+  name, description and parameter names. It returns at most 8 tools by default;
+  the model may pass `limit`.
+- The result goes back in each protocol's native form: `tool_reference`
+  blocks on Anthropic, `tool_search_output` on OpenAI Responses. Fiber never
+  uses a provider's own search, so every provider behaves the same and every
+  search is on the log.
+- Its description lists the sources of the deferred tools (each MCP server's
+  name and description), fixed when the preamble is built.
+- A search is an ordinary tool call. A resume or fork re-sends its result
+  byte for byte.
+- A loaded tool stays loaded until a handoff, which restarts the conversation
+  after the preamble (`docs/handoff.md`); after that the model searches again.
+- A call to a deferred tool that was never loaded runs like any other call,
+  after the schema check.
+
+### Size warning
+
+When the definitions declared in full take more than 10% of the model's
+context window, the preamble build is followed by a `notice` with code
+`tool_definitions_large`. It names the largest sources and the configuration
+that disables tools. The session runs anyway. 10% is the threshold at which
+Claude Code's opt-in automatic mode starts deferring tools.
+
+### Seeing the tools
+
+- `/tools` in the terminal, and the `tools` driver command
+  (`docs/invocation.md`), list every declared tool with:
+  - its source: built-in, extension or MCP server
+  - its state: full, deferred or loaded
+  - its approximate size in tokens
+- A tool's size in tokens is estimated from its size in bytes. The
+  bytes-to-tokens rate comes from the last preamble build: the tokens its first
+  request wrote to the cache (`usage_recorded`), divided by the preamble's size
+  in bytes. Before a first request, sizes are shown in bytes.
+- `preamble_built` records, for each tool definition, whether it was deferred
+  (`docs/events.md`).
+
+### Size budget in CI
+
+- CI fails the build when the built-in tool definitions, serialised as sent,
+  grow past a total budget in bytes. CI counts bytes because it cannot count
+  tokens without calling a provider.
+- The budget is set from the total when the built-ins are first written.
+  Raising it is an explicit change in the same pull request that grows a
+  definition.
+- Every CI run prints the size of each built-in definition, so the tool that
+  grew can be seen without reproducing the build.
+- The owner's pi setup spent about 13,800 tokens a request on 31 tools
+  ([pi-extensions#1](https://github.com/aakshintala/pi-extensions/issues/1)).
+
 ## Not settled here
 
 - Whether a call that started but never finished may be re-run after a crash:
   [Revisit: may a tool that never finished be re-run after a crash?](https://github.com/aakshintala/fiber/issues/40)
-- Which tools the model sees, and when:
-  [Which tools the model sees, and when](https://github.com/aakshintala/fiber/issues/51)
 - Each tool's own design: the tickets indexed in
   [Epic: tools](https://github.com/aakshintala/fiber/issues/59).
 - When a hook runs and what it may change:

@@ -99,3 +99,20 @@ Keeping a 5-minute cache warm with a request every 270 seconds, for up to an
 hour of idle, cost 0.796 (pi) and 0.558 (Claude Code) on Opus 5.5. It was not
 adopted: a session with no client exits when idle, and an idle Fiber does no
 work.
+
+## Deferred tools (September 24, 2026)
+
+Scripts: `probe_defer_responses.py` (OpenRouter, GPT-6 Luna, Responses),
+`probe_defer_muse.py` (Muse Spark 1.3, Responses) and
+`probe_defer_openrouter_anthropic.py` (OpenRouter, Sonnet 5, Anthropic
+messages). Five direct tools plus three calendar tools in a namespace, either
+in full or with `defer_loading` and a client-run `tool_search`.
+
+| Route | Full | Deferred | Loaded, cache read | Model behaviour |
+|---|---|---|---|---|
+| OpenRouter, GPT-6 Luna | 5,655 in | 5,948 in | not reached | called the deferred tool directly, no search |
+| Muse Spark 1.3 | 6,425 in | 6,410 in | 6,385 of 6,980 | called `tool_search`, then kept the cache |
+| OpenRouter, Sonnet 5 | 4,857 in | ran | not measured | BM25 search rejected: "OpenRouter implements the regex tool-search variant only"; regex search worked |
+
+OpenRouter's Responses route does not defer for GPT-6 Luna. OpenAI direct and
+Anthropic direct were not probed; OpenAI's documentation covers the first.
