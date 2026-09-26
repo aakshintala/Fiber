@@ -1,5 +1,5 @@
 //! Mini harness: blocking `std::thread` + `std::net::TcpStream`, no runtime.
-//! Numbers from this binary are macOS arm64 only; do not treat them as Linux.
+//! Timings are per platform; label the host when quoting them.
 
 use std::fs::File;
 use std::io::{self, Read, Write};

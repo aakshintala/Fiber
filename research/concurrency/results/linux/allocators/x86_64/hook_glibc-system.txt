@@ -1,0 +1,25 @@
+## glibc-system hook-conversion-cost stripped=1086664
+--- run 1 ---
+| value | JSON size | to Lua | hook | to Rust | total (median of 200, after 20 warmup) |
+|---|---|---|---|---|---|
+| tool result, 16 KiB content (default cap) | 16 KiB | 3 µs | 144 µs | 5 µs | 152 µs |
+| tool result, 1 MiB content (artifact-sized) | 1036 KiB | 48 µs | 9037 µs | 82 µs | 9171 µs |
+| model request, 200 messages | 66 KiB | 294 µs | 520 µs | 465 µs | 1283 µs |
+| model request, 1000 messages | 317 KiB | 1465 µs | 2384 µs | 2280 µs | 6209 µs |
+maxrss_kib: 9360
+--- run 2 ---
+| value | JSON size | to Lua | hook | to Rust | total (median of 200, after 20 warmup) |
+|---|---|---|---|---|---|
+| tool result, 16 KiB content (default cap) | 16 KiB | 3 µs | 144 µs | 5 µs | 152 µs |
+| tool result, 1 MiB content (artifact-sized) | 1036 KiB | 47 µs | 9028 µs | 82 µs | 9158 µs |
+| model request, 200 messages | 66 KiB | 284 µs | 518 µs | 465 µs | 1265 µs |
+| model request, 1000 messages | 317 KiB | 1468 µs | 2370 µs | 2270 µs | 6139 µs |
+maxrss_kib: 9292
+--- run 3 ---
+| value | JSON size | to Lua | hook | to Rust | total (median of 200, after 20 warmup) |
+|---|---|---|---|---|---|
+| tool result, 16 KiB content (default cap) | 16 KiB | 3 µs | 144 µs | 5 µs | 152 µs |
+| tool result, 1 MiB content (artifact-sized) | 1036 KiB | 46 µs | 8716 µs | 82 µs | 8845 µs |
+| model request, 200 messages | 66 KiB | 277 µs | 517 µs | 465 µs | 1260 µs |
+| model request, 1000 messages | 317 KiB | 1419 µs | 2385 µs | 2258 µs | 6098 µs |
+maxrss_kib: 9300

@@ -1,0 +1,32 @@
+### probe1
+=== uname -a ===
+Linux runnervmtr4k5 6.17.0-1022-azure #22-Ubuntu SMP Mon Jul 27 17:24:03 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+
+=== launching probe1_orphan_sigpipe.py (it will SIGKILL itself) ===
+Children started. PIDs: 5729 5730 5731 5732
+--- ps snapshot: before parent dies ---
+    PID    PPID    PGID STAT COMMAND
+   5729    5728    5729 Ss   fiber_probe_A -c for i in $(seq 1 100000); do echo line-$i; sleep 0.05; done
+   5730    5728    5730 Ss   fiber_probe_B 300
+   5731    5728    5731 Ss   fiber_probe_C -f /home/runner/work/fiber/fiber/research/shutdown/probe1_quiet_file.txt
+   5732    5728    5732 Ss   fiber_probe_D -c for i in $(seq 1 100000); do echo line-$i >> /home/runner/work/fiber/fiber/research/shutdown/probe1_output_file.txt; sleep 0.05; done
+Sending SIGKILL to self (pid 5728) to simulate a Fiber crash...
+probe1 driver exit status: 137
+
+=== waiting 3s after simulated crash ===
+=== ps for surviving fiber_probe_* children ===
+    PID    PPID    PGID STAT COMMAND
+   5730       1    5730 Ss   fiber_probe_B 300
+   5732       1    5732 Ss   fiber_probe_D -c for i in $(seq 1 100000); do echo line-$i >> /home/runner/work/fiber/fiber/research/shutdown/probe1_output_file.txt; sleep 0.05; done
+   5838    5725    2017 S    awk NR==1 || /fiber_probe/
+
+=== output file (child D, writes to a file not a pipe) tail ===
+line-76
+line-77
+line-78
+
+=== cleanup: killing any surviving fiber_probe_* processes ===
+killing 5730
+killing 5732
+killing 5841
+done

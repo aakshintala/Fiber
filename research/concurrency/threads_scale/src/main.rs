@@ -1,11 +1,19 @@
 //! N parked OS threads, each blocked on its own `mpsc::Receiver::recv()`.
 //!
 //! Idle CPU, wakeups and RSS versus parked-thread count, and whether a
-//! smaller thread stack changes RSS. Linux is unmeasured: every printed
-//! number is macOS arm64 only.
+//! smaller thread stack changes RSS. Timings are per platform; label the
+//! host when quoting them.
 
 use std::sync::mpsc;
 use std::time::Duration;
+
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(feature = "jemalloc")]
+#[global_allocator]
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 fn env_u64(name: &str, default: u64) -> u64 {
     std::env::var(name)

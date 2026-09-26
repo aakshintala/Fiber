@@ -7,10 +7,9 @@ its answer back. The path is the one Fiber would use: a Rust value becomes a
 Lua table through mlua's serde support, the hook rewrites it, and the table
 becomes a Rust value again.
 
-Re-run with `./measure.sh`. **macOS arm64 only** (Darwin 25.6.0, rustc 1.98.1,
-mlua 0.12 with vendored Lua 5.4). The Linux run belongs to
-[#16](https://github.com/aakshintala/fiber/issues/16). Sizes generalise;
-timings do not.
+Re-run with `./measure.sh`. The table is macOS arm64 (Darwin 25.6.0, rustc 1.98.1,
+mlua 0.12 with vendored Lua 5.4). Sizes generalise; timings do not. Linux results
+are below.
 
 The hook is a redaction: `string.gsub` of a token pattern over every text part.
 Each row is the median of 200 iterations after 20 warmup iterations, in one
@@ -37,3 +36,26 @@ What it shows:
 The model request rows are for comparison only. `docs/prompt-cache.md` rules
 out a hook that rewrites a message the model has already been sent, so no
 per-request hook exists to pay this.
+
+## Linux results
+
+Measured for [#16](https://github.com/aakshintala/fiber/issues/16) on GitHub-hosted
+`ubuntu-24.04` (AMD EPYC 7763) and `ubuntu-24.04-arm` (Neoverse-N2) runners, rustc
+1.98.1, on September 26, 2026. Raw output is in `linux/`. Totals, median of 200:
+
+| value | macOS arm64 | x86_64 musl | x86_64 glibc | arm64 musl | arm64 glibc |
+|---|---:|---:|---:|---:|---:|
+| tool result, 16 KiB | 73 µs | 210 µs | 152 µs | 141 µs | 116 µs |
+| tool result, 1 MiB | 4177 µs | 10892 µs | 9207 µs | 7733 µs | 6959 µs |
+| model request, 200 messages | 606 µs | 1858 µs | 1266 µs | 1296 µs | 1095 µs |
+| model request, 1000 messages | 2915 µs | 9165 µs | 6213 µs | 6400 µs | 5496 µs |
+
+The shared runners are about twice as slow as the M3 Pro. musl, the shipped target,
+is 11% to 48% slower than glibc. The conversion columns slow down most, because
+they allocate heavily and musl's allocator is slow: the 1 MiB result takes 627 µs
+to reach Lua on x86_64 musl against 57 µs on glibc. The hook column is 4% to 29%
+slower. The conclusion holds: every row stays small next to a model turn.
+
+Replacing musl's allocator with mimalloc or jemalloc brings musl to glibc's speed,
+at about 36 times the RSS with 512 parked threads. See "Replacing musl's allocator" in
+`research/concurrency/README.md`.

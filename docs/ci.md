@@ -150,7 +150,10 @@ What the artifacts are, how a release is triggered and how it is signed is
 
 ## Waiting on CI
 
-Every workflow's third-party actions are pinned to a commit hash.
+Every workflow's third-party actions are pinned to a commit hash. The hash is
+the latest release of each action's newest major version, which runs on the
+Node.js version GitHub currently supports. An action still on a deprecated
+Node.js version is moved to its newest major before it is pinned.
 
 No job polls the Actions API in a loop. The backstop's one lookup of the
 last passing `main` commit is the only Actions API call a workflow makes.

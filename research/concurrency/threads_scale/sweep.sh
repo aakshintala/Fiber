@@ -1,6 +1,6 @@
 #!/bin/sh
 # Parked-thread scale sweep: idle CPU / wakeups / RSS vs N_THREADS and stack.
-# Numbers are macOS arm64 only; Linux is unmeasured.
+# Label the host when quoting the numbers; timings are per platform.
 set -eu
 cd "$(dirname "$0")/.."
 WRAPPER="$(cd .. && pwd)/crate-split/no_wrapper.sh"
@@ -10,7 +10,7 @@ mkdir -p results
 cargo build --release -p threads_scale
 BIN=./target/release/threads_scale
 {
-    echo "=== threads_scale sweep (macOS arm64) ==="
+    echo "=== threads_scale sweep ($(uname -srm)) ==="
     for n in 1 8 32 128 512; do
         echo
         echo "--- N_THREADS=$n STACK_KIB=0 ---"

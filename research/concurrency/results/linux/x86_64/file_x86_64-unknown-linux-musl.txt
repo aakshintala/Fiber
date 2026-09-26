@@ -1,0 +1,1 @@
+target/x86_64-unknown-linux-musl/release/mini_blocking: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), static-pie linked, BuildID[sha1]=f59b4db9c8adae8035ee4d34429b9f8e8ce68fff, not stripped

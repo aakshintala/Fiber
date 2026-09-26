@@ -1,0 +1,12 @@
+## mini_blocking unstripped=923896 stripped=659624
+run 1: cancelled +500.5ms latency=163us total +500.7ms events=10 subprocess=done  maxrss_kib=1656 wall=0:00.50
+run 2: cancelled +500.6ms latency=71us total +500.8ms events=10 subprocess=done  maxrss_kib=1656 wall=0:00.50
+run 3: cancelled +500.6ms latency=168us total +500.8ms events=10 subprocess=done  maxrss_kib=1660 wall=0:00.50
+## mini_smol unstripped=1461640 stripped=988568
+run 1: cancelled +500.5ms latency=23us total +500.6ms events=10 subprocess=done  maxrss_kib=1660 wall=0:00.50
+run 2: cancelled +500.7ms latency=30us total +500.9ms events=10 subprocess=done  maxrss_kib=1648 wall=0:00.50
+run 3: cancelled +500.7ms latency=121us total +500.8ms events=10 subprocess=done  maxrss_kib=1652 wall=0:00.50
+## mini_tokio unstripped=1575952 stripped=1052952
+run 1: cancelled +501.5ms latency=182us total +501.7ms events=10 subprocess=done  maxrss_kib=1660 wall=0:00.50
+run 2: cancelled +501.7ms latency=110us total +501.9ms events=10 subprocess=done  maxrss_kib=1656 wall=0:00.50
+run 3: cancelled +501.8ms latency=123us total +502.0ms events=10 subprocess=done  maxrss_kib=1696 wall=0:00.50

@@ -1,0 +1,1 @@
+target/aarch64-unknown-linux-musl/release/mini_blocking: ELF 64-bit LSB executable, ARM aarch64, version 1 (SYSV), statically linked, BuildID[sha1]=e0a637e346572c52f1f610b45d39c9b3a38e5a03, not stripped

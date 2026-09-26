@@ -1,21 +1,28 @@
 #![allow(deprecated)]
 //!
-//! CPU time comes from `getrusage` (microseconds). Thread count and RSS come
-//! from `proc_pidinfo(PROC_PIDTASKINFO)`. Interrupt and timer wakeups come
-//! from Mach `task_info(TASK_POWER_INFO)`.
+//! CPU time comes from `getrusage` (microseconds) on both platforms.
+//!
+//! macOS: thread count and RSS come from `proc_pidinfo(PROC_PIDTASKINFO)`.
+//! Interrupt and timer wakeups come from Mach `task_info(TASK_POWER_INFO)`.
+//!
+//! Linux: thread count and RSS come from `/proc/self/status`. Context
+//! switches are voluntary plus involuntary, summed over `/proc/self/task/*/status`.
+//! Linux has no per-process wakeup counter, so the wakeup fields stay 0 and
+//! context switches are the idle signal.
 //!
 //! Every printed number is process-wide on the host that ran the binary.
-//! Label the host when you quote them; these timings do not generalise to Linux.
+//! Label the host when you quote them; timings do not carry across platforms.
 
 use std::time::{Duration, Instant};
 
-use libc::{
-    getpid, getrusage, mach_task_self, proc_pidinfo, proc_taskinfo, rusage, task_info,
-    KERN_SUCCESS, PROC_PIDTASKINFO, RUSAGE_SELF,
-};
+use libc::{getrusage, rusage, RUSAGE_SELF};
+#[cfg(target_os = "macos")]
+use libc::{getpid, mach_task_self, proc_pidinfo, proc_taskinfo, task_info, KERN_SUCCESS, PROC_PIDTASKINFO};
 
+#[cfg(target_os = "macos")]
 const TASK_POWER_INFO: u32 = 21;
 
+#[cfg(target_os = "macos")]
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct TaskPowerInfo {
@@ -32,6 +39,9 @@ pub struct Snapshot {
     pub wall: Instant,
     pub ru_utime_us: u64,
     pub ru_stime_us: u64,
+    /// CPU when `take` finished; differs from `ru_*time_us` by the cost of taking the snapshot.
+    pub ru_utime_after_us: u64,
+    pub ru_stime_after_us: u64,
     pub ru_maxrss_bytes: u64,
     pub rss_bytes: u64,
     pub threads: i32,
@@ -46,14 +56,61 @@ pub struct Snapshot {
     pub pti_system_ns: u64,
 }
 
+fn rusage_self() -> rusage {
+    let mut ru = unsafe { std::mem::zeroed::<rusage>() };
+    unsafe {
+        getrusage(RUSAGE_SELF, &mut ru);
+    }
+    ru
+}
+
 impl Snapshot {
+    #[cfg(target_os = "linux")]
     pub fn take() -> Self {
         let wall = Instant::now();
-
-        let mut ru = unsafe { std::mem::zeroed::<rusage>() };
-        unsafe {
-            getrusage(RUSAGE_SELF, &mut ru);
+        let ru = rusage_self();
+        let ru_utime_us = timeval_us(ru.ru_utime);
+        let ru_stime_us = timeval_us(ru.ru_stime);
+        let status = std::fs::read_to_string("/proc/self/status").expect("/proc/self/status");
+        let mut csw = 0i64;
+        let mut threads_running = 0;
+        for task in std::fs::read_dir("/proc/self/task").expect("/proc/self/task").flatten() {
+            let Ok(t) = std::fs::read_to_string(task.path().join("status")) else {
+                continue;
+            };
+            csw += status_field(&t, "voluntary_ctxt_switches:")
+                + status_field(&t, "nonvoluntary_ctxt_switches:");
+            if t.lines().any(|l| l.starts_with("State:\tR")) {
+                threads_running += 1;
+            }
         }
+        let after = rusage_self();
+        Snapshot {
+            wall,
+            ru_utime_us,
+            ru_stime_us,
+            ru_utime_after_us: timeval_us(after.ru_utime),
+            ru_stime_after_us: timeval_us(after.ru_stime),
+            // Linux documents ru_maxrss in KiB.
+            ru_maxrss_bytes: ru.ru_maxrss as u64 * 1024,
+            rss_bytes: status_field(&status, "VmRSS:") as u64 * 1024,
+            threads: status_field(&status, "Threads:") as i32,
+            threads_running,
+            csw: csw as i32,
+            unix_syscalls: 0,
+            interrupt_wakeups: 0,
+            platform_idle_wakeups: 0,
+            timer_wakeups_bin_1: 0,
+            timer_wakeups_bin_2: 0,
+            pti_user_ns: ru_utime_us * 1000,
+            pti_system_ns: ru_stime_us * 1000,
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn take() -> Self {
+        let wall = Instant::now();
+        let ru = rusage_self();
         let ru_utime_us = timeval_us(ru.ru_utime);
         let ru_stime_us = timeval_us(ru.ru_stime);
         // Darwin documents ru_maxrss in bytes.
@@ -91,6 +148,8 @@ impl Snapshot {
             wall,
             ru_utime_us,
             ru_stime_us,
+            ru_utime_after_us: ru_utime_us,
+            ru_stime_after_us: ru_stime_us,
             ru_maxrss_bytes,
             rss_bytes: pti.pti_resident_size,
             threads: pti.pti_threadnum,
@@ -107,12 +166,23 @@ impl Snapshot {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn status_field(status: &str, key: &str) -> i64 {
+    status
+        .lines()
+        .find_map(|l| l.strip_prefix(key))
+        .and_then(|v| v.split_whitespace().next())
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
+}
+
 fn timeval_us(tv: libc::timeval) -> u64 {
     (tv.tv_sec as u64)
         .saturating_mul(1_000_000)
         .saturating_add(tv.tv_usec as u64)
 }
 
+#[cfg(target_os = "macos")]
 fn mach_ticks_to_ns(ticks: u64) -> u64 {
     let mut info = libc::mach_timebase_info_data_t { numer: 0, denom: 0 };
     unsafe {
@@ -176,6 +246,7 @@ pub struct Report {
     pub timer_wakeups_bin_2: u64,
     pub csw: i32,
     pub unix_syscalls: i32,
+    pub snapshot_cpu_us: u64,
 }
 
 impl Report {
@@ -184,8 +255,8 @@ impl Report {
             label: label.to_string(),
             platform: platform_line(),
             window: end.wall.saturating_duration_since(start.wall),
-            cpu_user_us: end.ru_utime_us.saturating_sub(start.ru_utime_us),
-            cpu_sys_us: end.ru_stime_us.saturating_sub(start.ru_stime_us),
+            cpu_user_us: end.ru_utime_us.saturating_sub(start.ru_utime_after_us),
+            cpu_sys_us: end.ru_stime_us.saturating_sub(start.ru_stime_after_us),
             pti_user_ns: end.pti_user_ns.saturating_sub(start.pti_user_ns),
             pti_sys_ns: end.pti_system_ns.saturating_sub(start.pti_system_ns),
             threads_start: start.threads,
@@ -207,6 +278,8 @@ impl Report {
                 .saturating_sub(start.timer_wakeups_bin_2),
             csw: end.csw.saturating_sub(start.csw),
             unix_syscalls: end.unix_syscalls.saturating_sub(start.unix_syscalls),
+            snapshot_cpu_us: (end.ru_utime_after_us + end.ru_stime_after_us)
+                .saturating_sub(end.ru_utime_us + end.ru_stime_us),
         }
     }
 
@@ -247,7 +320,7 @@ impl Report {
 
     pub fn print(&self) {
         println!("=== {} ===", self.label);
-        println!("platform: {} (quoted as macOS arm64)", self.platform);
+        println!("platform: {}", self.platform);
         println!("window_s: {:.3}", self.window.as_secs_f64());
         println!("cpu_user_us: {}", self.cpu_user_us);
         println!("cpu_sys_us: {}", self.cpu_sys_us);
@@ -266,6 +339,9 @@ impl Report {
         println!("rss_bytes: {}", self.rss_bytes_end);
         println!("rss_kib: {:.1}", self.rss_bytes_end as f64 / 1024.0);
         println!("maxrss_bytes: {}", self.maxrss_bytes);
+        if cfg!(target_os = "linux") {
+            println!("wakeups: n/a on Linux (use csw)");
+        }
         println!("interrupt_wakeups: {}", self.interrupt_wakeups);
         println!("platform_idle_wakeups: {}", self.platform_idle_wakeups);
         println!("timer_wakeups_bin_1: {}", self.timer_wakeups_bin_1);
@@ -275,6 +351,7 @@ impl Report {
         println!("csw: {}", self.csw);
         println!("csw_per_sec: {:.4}", self.csw_per_sec());
         println!("unix_syscalls_delta: {}", self.unix_syscalls);
+        println!("snapshot_cpu_us (excluded from the window): {}", self.snapshot_cpu_us);
     }
 }
 
