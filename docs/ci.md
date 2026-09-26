@@ -1,0 +1,154 @@
+# CI
+
+What runs in CI, on which runners, and what must pass before a pull request
+merges and before a release ships. This is what is true now, not a plan. It
+is settled by
+[CI: what runs, where, and what gates a merge](https://github.com/aakshintala/fiber/issues/62);
+that ticket's resolution holds the rationale and the rejected alternatives.
+
+The checks themselves are set elsewhere: tests in `docs/testing.md`, lints
+and file rules in `docs/code-quality.md`, crates and supply chain in
+`docs/dependencies.md`, budgets in `docs/performance.md`, and the tool
+definition size budget in `docs/tools.md`. What a release contains is
+[Releasing and upgrading](https://github.com/aakshintala/fiber/issues/68).
+
+## Runners
+
+CI is GitHub Actions on GitHub-hosted runners: `ubuntu-24.04` for Linux
+x86_64, `ubuntu-24.04-arm` for Linux arm64, and a macOS arm64 runner. The
+repository is public, so minutes cost nothing. The account is on GitHub Pro,
+which runs at most 40 jobs at once and at most 5 macOS jobs at once, shared
+by every repository on the account. Each run uses one macOS job, so five
+pull requests can run before a sixth queues for macOS.
+
+Every runner has a C compiler, which `mlua` needs to build Lua
+([ADR 0006](adr/0006-extension-runtime-lua.md)).
+
+## The merge gate
+
+One check is required to merge: `CI`. It passes only when every job the
+selection chose succeeded and every job it did not choose was skipped. If
+the selection itself fails, `CI` fails.
+
+A branch does not have to be up to date with `main` to merge, and there is no
+merge queue. The backstop on `main` catches two pull requests that each
+passed alone but break together.
+
+A newer push to a pull request cancels that pull request's older run.
+
+## Selection
+
+A pull request runs only what its diff can affect.
+
+- A diff whose every file is Markdown, under `docs/` or under `research/`
+  runs the docs job alone.
+- A diff that changes `Cargo.lock`, any `Cargo.toml`, `rust-toolchain.toml`
+  or anything under `.github/` runs everything.
+- Any other diff runs the crates it touches and every crate that depends on
+  them, read from the workspace's dependency graph
+  ([ADR 0002](adr/0002-module-boundaries-are-crate-boundaries.md)).
+  Binary-level tests depend on every crate, so any change to Rust code runs
+  them.
+
+The selector has its own tests.
+
+## On every pull request that changes code
+
+On each of Linux x86_64, Linux arm64 and macOS arm64, one job:
+
+- builds the workspace with the debug profile
+- runs clippy with the workspace lints across all targets, so code compiled
+  only for one platform is linted on that platform
+- runs the selected tests under nextest, and doc-tests with
+  `cargo test --doc`
+- reports how many tests ran
+
+The debug profile sets `panic = "abort"`, as the release profile does, so
+the `fiber` binary that binary-level tests start behaves like the one that
+ships. Cargo ignores the setting when it builds the test harness.
+
+A failed binary-level test retries once. A pass on retry does not fail the
+run: CI opens a flake issue naming the test, or comments on the open one
+(`docs/testing.md`, "Flaky tests"). No other test retries.
+
+On Linux x86_64 alone:
+
+- `cargo fmt --check`
+- no non-test source file over 800 lines
+- the `unsafe` table in `docs/code-quality.md` matches the code
+- every crate a `Cargo.toml` names is listed in `docs/dependencies.md`
+- cargo-deny's licence, source and ban checks
+- the built-in tool definitions within their byte budget, with each
+  definition's size printed
+- mutation testing: `cargo-mutants --in-diff`, split across runners with one
+  shard per 25 mutants, at most 6. Both numbers were picked, not measured;
+  they are reset from the first real runs.
+- for a pull request labelled `bug-fix`, its new and changed tests run
+  against the base commit, and at least one must fail there
+
+One more Linux x86_64 job builds the release profile at the pull request's
+head and at its base commit. It checks that the stripped head binary is
+under 20 MiB and runs the benchmarks that gate each pull request
+(`docs/performance.md`). A timing gate compares against the base binary
+measured in the same job on the same runner.
+
+Nothing in CI writes a snapshot, calls a live provider or reaches the public
+network (`docs/testing.md`).
+
+## Advisories
+
+cargo-deny's advisory check blocks a pull request that changes `Cargo.lock`,
+and blocks a release. It also runs daily on `main` and opens an issue, or
+comments on the open one, when an advisory applies. A pull request that does
+not change `Cargo.lock` is not failed by an advisory published after it was
+opened.
+
+## The backstop on `main`
+
+Every push to `main` runs the backstop on all three platforms. It compiles
+the whole workspace and runs the tests the selection chooses from the diff
+since the last `main` commit whose backstop passed. That is the parent
+commit unless a run was cancelled or failed. A conflict between two merged
+pull requests shows in a crate that depends on what the later one changed,
+and the selection includes that crate.
+
+When the backstop fails, it opens an issue, or comments on the open one. It
+never blocks a merge.
+
+The backstop is the only run that saves the build cache. Pull requests
+restore it and never write it, so branches do not fill the repository's
+10 GB cache.
+
+## Toolchain
+
+`rust-toolchain.toml` pins the exact Rust version, 1.98.1. Local builds and
+CI read the same file, and it is the only version Fiber supports
+(`docs/dependencies.md`, "Toolchain").
+
+A weekly scheduled job opens a pull request that bumps the pin when a newer
+stable release exists. That pull request passes CI like any other. A lint
+renamed in the new release fails it, because `unknown_lints` is denied
+(`docs/code-quality.md`).
+
+## Releases
+
+Before the release workflow publishes anything, it:
+
+- builds the release artifacts from the release commit
+- runs the full test suite, with no selection, on all three platforms, with
+  binary-level tests run against those exact artifacts
+- runs cargo-deny's advisory check
+- measures the benchmarks on Linux arm64 and macOS arm64 and reports them,
+  without gating (`docs/performance.md`)
+
+What the artifacts are, how a release is triggered and whether it is signed
+is [Releasing and upgrading](https://github.com/aakshintala/fiber/issues/68).
+
+## Waiting on CI
+
+Every workflow's third-party actions are pinned to a commit hash.
+
+No job polls the Actions API in a loop. The backstop's one lookup of the
+last passing `main` commit is the only Actions API call a workflow makes.
+Agents wait on the `CI` check with `gh-ci`, never with a `gh run watch`
+loop, because such loops have tripped GitHub's Actions rate limit.

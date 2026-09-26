@@ -78,7 +78,8 @@ A panic means Fiber has a bug. A condition that can happen at run time, such
 as a missing file, a refused connection or a malformed response, returns an
 error.
 
-Release builds set `panic = "abort"`. A panic ends its process, which is one
+Release and debug builds set `panic = "abort"`, so the binary tests start
+behaves like the one that ships. A panic ends its process, which is one
 session ([ADR 0009](adr/0009-each-session-is-one-process.md)), and resuming
 continues from the log, which is fsynced around every side effect
 ([ADR 0001](adr/0001-session-log-is-the-only-state-of-record.md)). Under

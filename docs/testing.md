@@ -7,7 +7,7 @@ that ticket's resolution holds the rationale and the rejected alternatives.
 
 Vocabulary is `CONTEXT.md`. The event stream is `docs/events.md`; the crates
 are `docs/architecture.md`. Which CI jobs run on which runners is
-[CI](https://github.com/aakshintala/fiber/issues/62). Latency, memory and
+`docs/ci.md`. Latency, memory and
 storage budgets are
 `docs/performance.md`. No
 test asserts a performance timing or sleeps to get a correct result.
