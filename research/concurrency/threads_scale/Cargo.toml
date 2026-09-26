@@ -4,4 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+mimalloc = { version = "0.1.52", optional = true }
+tikv-jemallocator = { version = "0.7.0", optional = true }
 measure = { path = "../measure" }
+
+# Allocator comparison for #16: build with --features mimalloc or --features jemalloc.
+[features]
+mimalloc = ["dep:mimalloc"]
+jemalloc = ["dep:tikv-jemallocator"]

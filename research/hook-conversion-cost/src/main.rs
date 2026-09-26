@@ -4,6 +4,14 @@ use mlua::{Lua, LuaSerdeExt, StdLib, LuaOptions, Function, Value};
 use serde_json::json;
 use std::time::Instant;
 
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(feature = "jemalloc")]
+#[global_allocator]
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 const HOOK: &str = r#"
 return function(v)
   if v.content then

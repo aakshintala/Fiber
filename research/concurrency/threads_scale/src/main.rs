@@ -7,6 +7,14 @@
 use std::sync::mpsc;
 use std::time::Duration;
 
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(feature = "jemalloc")]
+#[global_allocator]
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 fn env_u64(name: &str, default: u64) -> u64 {
     std::env::var(name)
         .ok()
