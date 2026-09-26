@@ -54,7 +54,9 @@ The selector has its own tests.
 
 ## On every pull request that changes code
 
-On each of Linux x86_64, Linux arm64 and macOS arm64, one job:
+On each of Linux x86_64, Linux arm64 and macOS arm64, one job runs
+`scripts/check`, the same command an implementer runs before opening a pull
+request (`docs/workflow.md`, "The gate"). It:
 
 - builds the workspace with the debug profile
 - runs clippy with the workspace lints across all targets, so code compiled
@@ -83,8 +85,9 @@ On Linux x86_64 alone:
 - mutation testing: `cargo-mutants --in-diff`, split across runners with one
   shard per 25 mutants, at most 6. Both numbers were picked, not measured;
   they are reset from the first real runs.
-- for a pull request labelled `bug-fix`, its new and changed tests run
-  against the base commit, and at least one must fail there
+- for a pull request whose ticket, the issue its body resolves, is labelled
+  `bug`, its new and changed tests run against the base commit, and at least
+  one must fail there
 
 One more Linux x86_64 job builds the release profile at the pull request's
 head and at its base commit. It checks that the stripped head binary is

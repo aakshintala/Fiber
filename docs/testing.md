@@ -162,7 +162,7 @@ An edit that genuinely changes no behaviour is exempted in the code, with a
 written reason. How many runners share the mutants is CI's to set.
 
 A bug fix must also show that its test reproduces the bug. For a pull request
-marked as a bug fix, CI runs its new and changed tests against the base commit,
+whose ticket is labelled `bug`, CI runs its new and changed tests against the base commit,
 and at least one must fail there.
 
 Diff-scoped mutation testing has two known limits. It cannot see a change in
