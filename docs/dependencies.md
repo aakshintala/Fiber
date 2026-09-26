@@ -200,6 +200,7 @@ dependency.
 | cargo-nextest | tool | running tests, one process each |
 | cargo-mutants | tool | the mutation check on every pull request |
 | cargo-deny | tool | licences, advisories and crate sources |
+| cargo-about | tool | the release's third-party notices file |
 
 ## Supply chain
 
@@ -209,8 +210,13 @@ dependency.
   comes from crates.io.
 - Allowed licences: MIT, Apache-2.0, Apache-2.0 WITH LLVM-exception,
   BSD-2-Clause, BSD-3-Clause, ISC, Zlib, BSL-1.0, Unicode-3.0,
-  CDLA-Permissive-2.0, Unlicense, CC0-1.0 and MIT-0. Every crate above uses
-  only these.
+  CDLA-Permissive-2.0, Unlicense, CC0-1.0, MIT-0 and MPL-2.0. Copyleft
+  licences that reach beyond the file, such as GPL, LGPL and AGPL, are not
+  allowed. A crate offered under several licences passes if one of them is
+  on the list.
+- Every release ships a notices file with the licence text and copyright
+  notice of every crate compiled into the binary. cargo-about generates it
+  from `Cargo.lock`, and CI fails if it cannot.
 - An advisory fails the build, including one that marks a crate unmaintained.
   An exception names the advisory, the path that pulls the crate in and the
   condition for removing the exception, as codex's `deny.toml` does.
