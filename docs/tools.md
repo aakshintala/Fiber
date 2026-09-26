@@ -83,13 +83,14 @@ by content.
 
 - A tool that declares no cap is cut at 16 KiB of model-facing content.
   Configuration can override any tool's cap (`docs/configuration.md`). A tool may declare a larger or
-  smaller cap: the file tools and web fetch set their own in
-  [File tools: read, write and edit](https://github.com/aakshintala/fiber/issues/52)
-  and
+  smaller cap: web fetch sets its own in
   [Web fetch and web search](https://github.com/aakshintala/fiber/issues/57).
+  `read` keeps the 16 KiB default ("File tools").
 - A cut result keeps the declared end (head or tail), a notice saying it was
   cut, and the artifact path. Nothing is lost, only moved out of the model's
-  view. The full output is in the session's `artifacts/`.
+  view. The full output is in the session's `artifacts/`. `read` is the
+  exception: the file is the full output, so a cut read writes no artifact
+  and its notice gives the offset to continue from.
 - The model reads the rest with the ordinary `read` tool on that path. There is
   no dedicated tool for it. A read of `artifacts/` has only the `reads` effect,
   so it is never reviewed.
@@ -126,6 +127,130 @@ call cancelled while it can still change something. The one wait it cannot cut
 short is a read blocked in the kernel, such as on a hung network filesystem.
 The second is an MCP call, which Fiber can only ask to stop: it ends `failed`
 with code `mcp_cancel_requested`, never `cancelled` (`docs/mcp.md`, "Calls").
+
+## File tools
+
+Settled by
+[File tools: read, write and edit](https://github.com/aakshintala/fiber/issues/52);
+that ticket's resolution holds the rationale and the rejected alternatives.
+How pi, codex, Claude Code and fiber-zig do it is
+[research/file-tools/reference-agents.md](../research/file-tools/reference-agents.md);
+the owner's usage is
+[research/file-tools/usage.md](../research/file-tools/usage.md).
+
+There are three: `read`, `write` and `edit`. There is no listing tool, and
+`read` on a directory fails with `unsupported_file` and points to the shell.
+Search is
+[Search: built-in tools or the shell?](https://github.com/aakshintala/fiber/issues/54).
+
+A relative path is resolved against the workspace. A symbolic link is resolved
+to its target, and the target is the path the call declares, so permission and
+the credential deny (`docs/permissions.md`) judge where the bytes really go.
+
+### read
+
+- Arguments: `path` (required); `offset`, the first line to return, counted
+  from 1; `limit`, the number of lines; `pages`, a page range such as `1-5`,
+  for a PDF only.
+- Text comes back as it is in the file, without line numbers and without a
+  byte order mark. Nothing needs stripping before it is copied into an edit.
+- The cap is the 16 KiB default ("Bounded results"). A cut falls at a line
+  boundary, and the notice gives the lines shown, the file's total and the
+  `offset` to continue from. No artifact is written.
+- A single line longer than the cap is cut inside the line. The notice gives
+  the byte where it was cut and says the rest needs a byte-range read through
+  the shell, such as `cut -c` or `dd`.
+- An `offset` past the end of the file fails with `invalid_arguments` and
+  gives the file's line count.
+- A PNG, JPEG, GIF or WebP file comes back as an image part. The provider
+  module resizes it to the provider's limit. For a model that cannot take
+  images, the image is left out and the result says so.
+- A PDF comes back as a PDF part. One of more than 10 pages needs `pages`,
+  and a request takes at most 20 pages; these are Claude Code's numbers. The
+  provider module sends the PDF natively where its protocol accepts a PDF in a
+  tool result, and otherwise sends the pages rendered as images. Rendering uses
+  poppler's `pdftoppm`; when it is not installed, the call fails with
+  `tool_error` and a message naming the package. Which protocols accept a PDF
+  is
+  [Probe: which protocols accept a PDF in a tool result](https://github.com/aakshintala/fiber/issues/121).
+- A path that does not exist fails with `not_found`.
+- Any other file that is not UTF-8 text, and any directory or device, fails
+  with `unsupported_file`, giving its size and detected type.
+- Effects: `reads`, reversible, with the resolved path.
+
+### write
+
+- Arguments: `path` and `content`, both required.
+- It creates the file, and any missing parent directories, or replaces an
+  existing file.
+- Replacing a file keeps that file's line-ending style (CRLF or LF) and its
+  byte order mark. A new file is stored as given.
+- The result says whether the file was created or replaced, with its size in
+  bytes and lines.
+- Effects: creating a file is a reversible `writes`; replacing one is an
+  irreversible `writes`. Both carry the resolved path.
+
+### edit
+
+- Arguments: `path` and `edits`, a list of one or more blocks, each
+  `{ old_text, new_text }`. There is no replace-all.
+- Every block is matched against the file as it was before the call. Each
+  `old_text` must occur exactly once, and blocks may not overlap. Either every
+  block applies and the file is written once, or nothing is written.
+- Matching is exact first. When a block's exact text is not found, it is
+  matched again with trailing spaces on each line ignored and Unicode quotes,
+  dashes and spaces folded to their ASCII forms (pi's rule). Only the lines a
+  block touches take the new text; every other line keeps its original bytes.
+  A block is unique if it is unique in the form it was matched in.
+- Matching sets the byte order mark aside and treats line endings as LF. The
+  file is written back with its own line-ending style and byte order mark.
+- Failures: a block not found fails with `no_match`; a block found more than
+  once fails with `ambiguous_match`, giving the count. Both name the block by
+  its index. An empty `old_text`, overlapping blocks, or edits that leave the
+  file unchanged fail with `invalid_arguments`. A file that does not exist
+  fails with `not_found`, and one that is not UTF-8 text with
+  `unsupported_file`.
+- The result gives, for each block, the lines it replaced and the lines the new
+  text now occupies, and says when a block matched only after normalising.
+  The diff goes in `details` for clients and is not sent to the model.
+- Effects: an irreversible `writes`, with the resolved path.
+- In the owner's pi sessions, 32.5% of 3,837 edits carried more than one
+  block, and up to 27. Claude Code's replace-all was used in none of 505
+  edits.
+
+### Stale files
+
+- An edit carries its own check: every block must still match the current
+  file, and everything outside the blocks is kept.
+- A `write` that would replace an existing file is refused with `stale_file`
+  unless this session has seen the file's current content. Seen means a
+  `read` of the file (any range) or the session's own `write` or `edit`.
+  Fiber compares a hash of the whole file, taken when it was read or written,
+  with a hash of the file now. Modification times are not used.
+- The message says the file changed or was never read, and to read it first.
+  A file changed by the session's own shell command, such as a formatter,
+  counts as changed.
+- What was seen is held in memory for the live context. It is cleared at a
+  handoff, because the model's context no longer holds the file
+  (`docs/handoff.md`), and it starts empty after a resume, a fork or a rewind.
+  Nothing is logged for it.
+- In the owner's Claude Code sessions, Claude Code's refusal to write a file
+  the model had not read fired 26 times; its refusal of a file modified since
+  it was read never fired. 86% to 94% of writes created files never read in
+  the session.
+
+### How a change lands
+
+- `write` and `edit` write a temporary file in the same directory and rename
+  it over the target, so a crash leaves the old file or the new one, never
+  half of either. The file's permission bits are kept.
+- A file with more than one name on disk (a hard link) is written in place
+  instead, so every name sees the change. A crash during that write can leave
+  it partly written.
+- Under the per-path lock (`docs/architecture.md`, "Tool calls in a step"),
+  just before writing, the path is resolved again. If a symbolic link now
+  points somewhere other than the path permission judged, the call fails with
+  `path_changed` and nothing is written.
 
 ## Shell
 
