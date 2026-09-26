@@ -40,10 +40,11 @@ tool, deferred by default where the protocol supports deferral.
   fix to any of them needs a Fiber release.
 - A server can start at session start, keep a child process with pipes open,
   hold a streaming HTTP connection and ask the person a question during a call.
-  None of this is a host capability an extension gets.
+  A process extension can do all of this too, but it speaks Fiber's own
+  protocol, not MCP (`docs/extensions.md`). MCP stays the way to bring in
+  tools from the ecosystem.
 - Where servers run is [ADR 0009](0009-each-session-is-one-process.md)'s:
-  the root's process owns a session tree's servers. It does not depend on
-  [where extension state lives](https://github.com/aakshintala/fiber/issues/39).
+  every session starts its own.
 - MCP tools declare effects per tool, from hints, which is weaker than an
   extension's per-call effects function (`docs/mcp.md`, "Effects").
 
@@ -51,8 +52,7 @@ tool, deferred by default where the protocol supports deferral.
 
 A first-party Lua extension, as pi does it. It gained two things: MCP fixes
 arrive as extension updates without a binary release, and the binary holds no
-protocol code. It would need four host capabilities that every extension would
-then get:
+protocol code. It needed four capabilities a Lua extension lacked:
 
 - a long-running child process with pipes
 - a streaming HTTP connection
@@ -60,10 +60,10 @@ then get:
 - starting at session start, where `docs/extensions.md` has a VM "created the
   first time the extension is invoked, not at startup"
 
-MCP's OAuth would be native anyway, because `docs/model-routing.md` says "OAuth
-flows are native, like protocols." And the extension would tie
-[#81](https://github.com/aakshintala/fiber/issues/81) to
-[where extension state lives](https://github.com/aakshintala/fiber/issues/39).
+A process extension now has all four (`docs/extensions.md`), so this is
+possible. It is still not how Fiber does it: MCP's OAuth would be native
+anyway, because `docs/model-routing.md` says "OAuth flows are native, like
+protocols", and every session would run the extension as one more process.
 
 No MCP client at all. MCP is the industry standard and the owner uses many MCP
 servers at work. Leaving it out invites someone to build an adapter, which is

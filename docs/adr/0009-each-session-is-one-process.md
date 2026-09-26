@@ -35,9 +35,9 @@ about 7 MiB more per delegate, or about 56 MiB at the owner's measured peak of
 - Every session is one `fiber serve` process, a delegate included. A Fiber
   delegate is a child `fiber serve` of its parent, driven over the pipe it was
   spawned with, exactly as a delegate running another harness is.
-- The root's process owns the tree's MCP servers. A delegate reaches them
-  through its parent: it raises the call on its event stream and its parent
-  answers with the result (`docs/mcp.md`, "Where servers run").
+- Every session starts its own MCP servers and process extensions, a
+  delegate included. Nothing is shared between sessions (`docs/mcp.md`,
+  "Where servers run"; `docs/extensions.md`).
 - The terminal UI is its own process, client zero of the `fiber serve` it
   spawns, over that process's stdin and stdout.
 - Every running session listens on a local socket for further clients.
@@ -49,7 +49,9 @@ about 7 MiB more per delegate, or about 56 MiB at the owner's measured peak of
 ## Consequences
 
 - One process is one session: one log, one lock, one socket, one set of
-  extension VMs. Nothing in the process has to ask which session it is in.
+  Lua VMs, its own MCP servers and process extensions. Nothing in the process
+  has to ask which session it is in, and no MCP server or extension serves two
+  sessions.
 - The Fiber harness has the same shape as every other harness: a child
   process with a prompt in and an event stream out.
 - Stopping a delegate is a signal to its process group, which always works.
@@ -62,12 +64,15 @@ about 7 MiB more per delegate, or about 56 MiB at the owner's measured peak of
   client.
 - The TUI can use only what the pipe and the socket carry, so premise 5 holds
   by construction.
-- Separate session trees share nothing in memory. Each pays for its own MCP
-  servers and model catalog.
-- A stdio MCP server's elicitation carries no link to the call that raised it,
-  so one shared by several sessions of a tree cannot always be attributed
-  (`docs/mcp.md`, "Elicitation, sampling and roots"). Threads would not have
-  changed this.
+- No two sessions share anything in memory. Each pays for its own MCP
+  servers, process extensions and model catalog: a delegate adds about
+  100 MiB with the owner's two daily MCP servers, about 1 GiB at the measured
+  peak of 8 delegates on macOS. A server or extension too heavy to run once
+  per session is its author's to make smaller.
+- A stdio MCP server's elicitation carries no link to the call that raised
+  it, but since only one session uses a server, the elicitation always
+  belongs to that session (`docs/mcp.md`, "Elicitation, sampling and
+  roots").
 
 ## Rejected
 
@@ -93,8 +98,19 @@ window in 8. It adds five costs: elicitations that cannot be attributed across
 sessions, a reload that needs a private instance, a daemon restart that
 restarts servers under running sessions, a daemon crash that removes MCP from
 every session, and a second code path for sessions started without the daemon.
-Sharing can be added later without changing the tool contract: the relay a
-delegate uses is the mechanism.
+Sharing across trees would need the relay that sharing within a tree was
+rejected for, below.
+
+MCP servers owned by the root and shared by its delegates. The root started
+each server once, and a delegate sent its calls up through its parent. At the
+owner's peak of 8 delegates it used 187 MiB against 1.0 GiB with servers per
+session (macOS arm64, `research/delegate-memory/README.md`). It was wrong for
+two of the owner's three local servers: cursor-delegate works in the folder it
+started in, so a delegate in a worktree got the root's folder, and node_repl
+keeps a JavaScript kernel whose variables every sharing session would see. It
+also needed three relay messages, a delegate's tool set given to it by its
+parent, and a rule for an elicitation no one could attribute. Process
+extensions follow the same rule for the same reasons.
 
 A hosted relay, as Claude Code's Remote Control uses. It works from any
 network with nothing installed on the phone. Fiber would have to run the

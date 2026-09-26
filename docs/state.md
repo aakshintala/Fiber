@@ -12,7 +12,9 @@ Default `~/.fiber` on macOS and Linux; `FIBER_HOME` relocates all of it.
     history.jsonl                 prompt history, append-only
     rules                         this project's standing rules
     worktrees/<id>/               one git worktree per delegate that asked for one
+    data/<extension>/             an extension's data for this project
   extensions/<name>/              installed extensions, one directory each
+  data/<extension>/               an extension's data for this machine
   approvals/<content-hash>        one file per approved extension content
   credentials/<provider>          one file per provider, mode 0600
   run/<session_id>                one local socket per running session
@@ -104,6 +106,16 @@ directory each. The `<name>` is the extension's git-address name, slugged the
 same way as project keys. Installing or updating writes a fresh directory
 and renames it into place; a running session keeps what it already loaded.
 
+**Extension data.** Each extension has two data directories: `data/<name>/`
+at the top of Fiber home for what it keeps per machine, and
+`projects/<key>/data/<name>/` for what it keeps per project. `<name>` is
+slugged as for `extensions/`. Fiber hands both paths to the extension and
+creates each the first time the extension writes there. A memory system or
+an index lives here. Nothing in them is session state, so a rewind or fork
+never touches them ([ADR 0001](adr/0001-session-log-is-the-only-state-of-record.md)).
+`fiber remove` deletes an extension's data directories too, asking first in a
+terminal.
+
 **Approvals.** One file per approved extension content, at
 `approvals/<content-hash>`. The file existing means that content is
 approved; deleting it revokes the approval. Recorded per machine, so content
@@ -158,7 +170,8 @@ One writer per session via `session.lock` is `docs/events.md`.
 There is no layout version marker. The first change to this layout adds a
 file `layout` at the top of Fiber home containing `2`; a missing file means
 layout 1. `fiber upgrade` changes only the Fiber binary and `extensions/`;
-it never touches sessions, config, rules, approvals or credentials. It
+it never touches sessions, config, rules, approvals, credentials or extension
+data. It
 replaces the binary by renaming a new file over it, never by writing in place,
 so a running session keeps the file it launched from; macOS kills a process
 whose signed binary is changed underneath it. How the

@@ -188,8 +188,8 @@ The `job_*` kinds are unchanged. A delegate adds two kinds keyed by `job_id`, as
   commands go down the pipe, its events come back up it, and the parent is
   its client zero. The parent drives it only through the driver commands and
   events, so no delegate has a path a supervisor lacks.
-- A Fiber delegate starts no MCP servers. It uses the root's through its
-  parent (`docs/mcp.md`, "Where servers run").
+- A Fiber delegate starts its own MCP servers and process extensions, as
+  every session does (`docs/mcp.md`, "Where servers run").
 - Stopping a Fiber delegate is a signal to its process group, as for any job
   (`docs/tools.md`, "Shell").
 - If a parent's process dies without a shutdown, its delegates keep running:

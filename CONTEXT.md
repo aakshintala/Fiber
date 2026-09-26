@@ -81,7 +81,8 @@ _Avoid_: agent type, backend
 
 **Session tree**:
 A top-level session and every delegate under it. Each session in it is its own
-process, and the root's process owns the tree's MCP servers.
+process, with its own MCP servers and extensions. Nothing is shared between
+them.
 _Avoid_: process tree, job tree
 
 **Daemon**:
@@ -171,10 +172,43 @@ _Avoid_: hook event, lifecycle event
 
 **Extension**:
 A package Fiber installs and loads, registering tools, providers and hooks
-through the three seams exactly as a built-in does. It may also carry skills,
-prompt templates, themes and binaries. Its code is embedded Lua 5.4 and runs
-with the account's full rights. See `docs/extensions.md`.
+through the three seams exactly as a built-in does, and watchers and commands
+besides. It may also carry skills, prompt templates, themes and binaries. Its
+code runs with the account's full rights, as a Lua extension, a process
+extension or both. See `docs/extensions.md`.
 _Avoid_: plugin, addon, module
+
+**Lua extension**:
+An extension whose code is Lua 5.4 run inside the session's own process.
+_Avoid_: script, embedded extension
+
+**Process extension**:
+An extension whose code is a separate program, in any language, that the
+session starts and talks to over a pipe as a client with extra rights. It is
+not an MCP server.
+_Avoid_: external extension, sidecar, plugin host
+
+**TUI extension**:
+The part of an extension that runs in the terminal's process and draws there.
+It reaches its session only through the event stream and driver commands, like
+any client.
+_Avoid_: UI plugin, facet
+
+**Extension state**:
+The values an extension keeps in a session's log, by key, so they survive a
+resume and follow a rewind or fork. An extension's configuration, credentials
+and data directories are not extension state.
+_Avoid_: extension storage, session state, entry
+
+**Fork rule**:
+What a fork or rewind gives one key of extension state: its value at the fork
+point, the parent's latest value, or nothing.
+_Avoid_: fork policy, inheritance
+
+**Data directory**:
+A directory in Fiber home that belongs to one extension, one per machine and
+one per project, for what it keeps across sessions.
+_Avoid_: storage, cache, extension home
 
 **Extension approval**:
 A person's decision to let a repository's extension load, made after seeing

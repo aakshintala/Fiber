@@ -208,18 +208,17 @@ When no answer is possible, Fiber declines, which is a response MCP defines.
 That is the same case as an escalation's block (`docs/permissions.md`,
 "Headless"): a session started by `fiber ask`, or one that has been sent
 `close`. Otherwise a pending elicitation waits for a client within the call's
-timeout ("Calls"); an elicitation does not extend it. An elicitation from a delegate is relayed up the tree like a
-delegate's escalation (`docs/permissions.md`, "Delegates").
+timeout ("Calls"); an elicitation does not extend it. An elicitation in a
+delegate reaches a person the way the delegate's escalations do
+(`docs/permissions.md`, "Delegates").
 
 On stdio, an elicitation carries nothing that links it to the call that raised
 it: the MCP TypeScript SDK 1.29.0 passes `relatedRequestId` to its transport
 (`shared/protocol.js:337`), and the stdio transport's `send(message)` drops it
-(`server/stdio.js:63`). A tree's sessions share its servers ("Where servers
-run"), so when a server with calls in flight from more than one session
-elicits, Fiber cannot tell whose call raised it. Then the elicitation goes to
-whoever drives the root, labelled with the server's name, and the root's log
-records it with the `action_id` of every call in flight on that server. With
-one session's calls in flight, it is that session's.
+(`server/stdio.js:63`). Each session has its own servers ("Where servers
+run"), so an elicitation always belongs to the session that started the
+server. When that session has more than one call in flight on the server, its
+log records the elicitation with the `action_id` of each.
 
 Fiber does not advertise sampling and does not answer a sampling request.
 Neither codex nor Claude Code advertises it.
@@ -267,25 +266,21 @@ The file format belongs to Configuration, which is not yet specified.
 ## Where servers run
 
 Every session is one process ([ADR 0009](adr/0009-each-session-is-one-process.md)),
-and the root's process owns the tree's servers. A delegate starts none. It
-gets their tool definitions from its parent as the driver command `mcp_tools`
-before its first prompt, and runs a call by raising `mcp_call_requested` on
-its event stream, which its parent answers with `mcp_result`
-(`docs/invocation.md`, `docs/events.md`). A parent that is itself a delegate
-passes both up. This is the request-and-reply shape the loop already uses to
-ask a human anything, with the parent as the answerer. Separate trees share
-none: each top-level session starts its own.
+and every session starts its own servers, a delegate included. Nothing is
+shared between sessions.
 
-- The tool set is still fixed per session. A delegate's first request declares
-  the tree's server tools as `mcp_tools` gave them.
-- A server whose behavior depends on the folder it started in serves every
-  session in the tree, including a delegate in a worktree, as the root started
-  it. A call that names no path acts in the root's workspace, not the
-  delegate's. The owner's cursor-delegate server is one: a call works
-  in the server's own directory unless it passes `isolation: CallerProvided`
-  with a path.
+- A server starts in the workspace of the session that started it, so a
+  delegate in a worktree gets servers that work in that worktree. The owner's
+  cursor-delegate server works in the folder it started in unless a call names
+  another, and node_repl keeps a JavaScript kernel whose variables persist
+  between calls. Neither would be correct shared between sessions.
 - Each of the owner's servers takes 43 to 93 MiB
-  (`research/delegate-memory/README.md`, "MCP servers"), once per tree.
+  (`research/delegate-memory/README.md`, "MCP servers"), once per session. A
+  delegate therefore adds about 100 MiB with the owner's two daily servers.
+  A server that costs too much to run once per session is its author's to make
+  smaller; Fiber does not share servers to hide the cost.
+- A delegate's first request waits for its own servers, as any session's does
+  ("Starting servers").
 
 ## Not settled here
 

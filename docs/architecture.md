@@ -30,6 +30,10 @@ no privilege a second GUI client would not have.") governs watchers and
 drivers absolutely. Participants are a deliberate, named exception whose
 entire surface is the three seams below.
 
+An extension can be all three. Its watchers are watchers, the driver commands
+it sends are a driver's, and only its tools, providers and hooks are
+participants (`docs/extensions.md`).
+
 **The terminal is a watcher and a driver, never a participant.** When the loop
 needs an answer from a human it emits a request and waits for a reply
 command. The terminal is one possible answerer; a calling harness is another,
@@ -121,10 +125,9 @@ over a native wire protocol; see `docs/model-routing.md` and
 
 "here is what is about to happen: allow it, change it, or refuse it."
 Synchronous: the loop stops, asks, waits and honours the answer, under a
-timeout Fiber enforces. The hook points are `docs/extensions.md`, "Hooks". Whether an extension runtime is in-process or a
-subprocess is [issue #11](https://github.com/aakshintala/fiber/issues/11)'s
-decision; whatever it picks must be able to answer synchronously inside a
-turn.
+timeout Fiber enforces. The hook points are `docs/extensions.md`, "Hooks". A hook is Lua in the
+session's process or a process extension answering over a pipe; either
+answers inside the turn, under the timeout the hook declared.
 
 ## Asking a human
 
@@ -132,13 +135,18 @@ turn.
 medium-specific surface may only add capability a client is free not to
 offer.**
 
-v0.0.1 ships one closed, versioned set of interactions — approval, confirm,
-select, text input, status — carried on the same request events the loop uses
-to ask a human anything, and answerable by any connected client including a
-headless one. A medium-specific drawing surface, letting an extension take
-the terminal or a future GUI's canvas directly, is a named future; whether
-v0.0.1 includes it is not yet ruled, and its shape is settled after
-[issue #11](https://github.com/aakshintala/fiber/issues/11).
+Fiber ships one closed, versioned set of interactions — approval, confirm,
+select, multi-select, text input, form and status — carried on the same
+request events the loop uses to ask a human anything, and answerable by any
+connected client including a headless one. An extension raises the same
+interactions, and may also send status and widget lines as data for a client
+to show or ignore.
+
+A session never ships drawing code to a client. An extension that draws
+carries a TUI extension, or a half for whatever other surface it draws on,
+which runs in that client's process and reaches its session only through the
+event stream and driver commands (`docs/extensions.md`, "Commands and
+screens"). What a TUI extension may draw is the TUI's to settle.
 
 What an approval actually asks about, and what answers it when nobody is at
 the keyboard, is `docs/permissions.md`.
@@ -190,8 +198,10 @@ session's process.
 `log` is not a thread. It is a shared object behind a lock: whoever emits an
 event calls it, and it mints `seq`, writes, fsyncs and fans out.
 
-Background jobs, delegates and MCP servers each add one parked thread per
-blocking pipe. That is affordable: 512 parked threads measured 11.6 MiB RSS
+Background jobs, delegates, MCP servers and process extensions each add one
+parked thread per blocking pipe. Each Lua extension in use adds one thread,
+which blocks on that extension's inbox (`docs/extensions.md`, "How an
+extension runs"). That is affordable: 512 parked threads measured 11.6 MiB RSS
 and 0.35 ms of CPU over ten seconds on macOS arm64.
 
 ### One inbox
@@ -286,7 +296,7 @@ that the other does not.
 ## Not settled here
 
 
-- The extension runtime: [Extension runtime: Lua or something else?](https://github.com/aakshintala/fiber/issues/11)
+- Extensions are `docs/extensions.md`
 - Confinement: [Does Fiber confine what tools can touch?](https://github.com/aakshintala/fiber/issues/30)
 - The tool contract is `docs/tools.md`; the tool set is indexed in
   [Epic: tools](https://github.com/aakshintala/fiber/issues/59)

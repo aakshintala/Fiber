@@ -87,8 +87,6 @@ acknowledgements carry no `seq`, so they never reach the log.
 | `steer_drop` | Removes a queued steering message, so nothing is applied. |
 | `cancel` | Ends the running turn. |
 | `reply` | Answers an interaction the loop raised: approval, confirm, select, text input or status. Takes an optional `session_id` naming a delegate. |
-| `mcp_tools` | Gives a delegate the tool definitions of its tree's MCP servers, before its first prompt (`docs/mcp.md`, "Where servers run"). Rejected `stale_request` once the tool set is fixed. |
-| `mcp_result` | Answers an `mcp_call_requested` a delegate raised, with the call's result. Rejected `stale_request` if no such request is pending. |
 | `job_stop` | Stops a running job by `job_id`. Rejected `stale_request` if the job is not running. |
 | `background` | Moves every shell call running in the current turn to the background (`docs/tools.md`, "Shell"). Rejected `stale_request` if none is running. |
 | `reload` | Re-reads configuration, restarts changed MCP servers and extensions, and declares the tool set again (`docs/mcp.md`, "Reload"). Rejected `busy` if a turn is running. |
@@ -96,6 +94,7 @@ acknowledgements carry no `seq`, so they never reach the log.
 | `model` | Switches model, effort or thinking at the next turn boundary. Takes a model reference and optional effort and thinking. The switch rebuilds the prompt cache, and the terminal says so with the rebuild's size first (`docs/prompt-cache.md`, "Switching model"). Rejected `invalid_arguments` for an unknown model. |
 | `handoff` | Starts a handoff: the model's context restarts from a note the model writes (`docs/handoff.md`). Takes optional instructions saying what the next stretch of work focuses on. During a turn it applies at the next step boundary, as a steering message does; between turns it is a turn of its own whose input is the command. |
 | `rewind` | Starts a new session that continues a session from an earlier point (`docs/events.md`, "Rewind"), and answers with the new session's id. Takes an optional `session_id`, default this session; an optional `seq`, default the start of the latest turn; and whether to summarise. Rejected `busy` if a turn is running, `not_step_boundary` if `seq` is not a step boundary, `session_held` if another process holds the session, and `delegate_session` if it is a delegate. |
+| `command` | Runs an extension's command by name, with the text after it as arguments, as a person typing `/name args` does (`docs/extensions.md`, "Commands"). Rejected `unknown_command` for a name no extension registered. |
 | `close` | Accept no more prompts; finish the turn in flight, then any running jobs (`docs/tools.md`, "Background jobs"), and exit. |
 
 Rejection codes: `malformed`, `unknown_command`, `busy`, `stale_request`,
@@ -235,9 +234,9 @@ the rationale and the rejected layouts are
 
 - **Every session is one `fiber serve` process.** A Fiber delegate is a
   child `fiber serve` of its parent, driven over the pipe it was spawned
-  with, as a delegate on any other harness is (`docs/delegates.md`). The
-  root's process owns the tree's MCP servers, and its delegates reach them
-  through it (`docs/mcp.md`).
+  with, as a delegate on any other harness is (`docs/delegates.md`). Each
+  session starts its own MCP servers and process extensions, so nothing is
+  shared between sessions (`docs/mcp.md`, `docs/extensions.md`).
 - **The terminal is its own process.** `fiber` starts a `fiber serve` session
   and is its client zero: commands down the pipe, events back up it. It draws
   what arrives and has no path to state the stream does not carry. It opens a

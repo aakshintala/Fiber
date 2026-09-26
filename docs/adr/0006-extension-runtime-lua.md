@@ -83,8 +83,8 @@ with no extension in use creates no VM and pays no idle cost.
   there.
 
 - **Panic strategy is constrained.** A Rust panic inside a *host* callback aborts
-  the process under `panic = "abort"` — and with several sessions in one process
-  (premise 2) that takes them all down. Extension-level Lua errors are safe either
+  the process under `panic = "abort"`, which ends that session
+  ([ADR 0009](0009-each-session-is-one-process.md)). Extension-level Lua errors are safe either
   way. Fiber must build `panic = "unwind"`, or hold every host callback to a
   no-panic bar. This is a Fiber-wide build decision to settle with #16's
   binary-size budget, recorded here because Lua's error safety depends on it.
@@ -103,10 +103,23 @@ with no extension in use creates no VM and pays no idle cost.
   is a directory of Lua files, loaded with a `require` limited to that
   directory. Shared code is either vendored into the extension or taken from
   another extension it depends on by name and version. Fiber fetches and
-  resolves those dependencies itself (`docs/extensions.md`). What is forgone
-  against full TypeScript is npm's existing libraries, not sharing: full TS
-  means a V8-class runtime (tens of MiB RSS, a JIT) that breaks the low-RSS
-  premise, or a system Node dependency that breaks single-binary distribution.
+  resolves those dependencies itself (`docs/extensions.md`). npm's libraries
+  are reached another way: an extension can be a separate program in any
+  language, a process extension, which pays for its own runtime only when a
+  person chooses it.
+
+- **Lua is the in-process way to run an extension, not the only way.** A
+  process extension registers the same things and has the same host calls
+  over a pipe (`docs/extensions.md`). Lua stays for everything that should
+  cost about 150 KiB rather than a process: a Node process measured 40 MiB
+  idle, Bun 20 MiB and Python 10 MiB (macOS arm64,
+  `research/extension-process/`).
+
+- **A Lua extension has its own thread and inbox.** Hooks, watcher events,
+  timers and replies to host calls arrive there, and a host call suspends
+  the calling code as a coroutine, so an extension can poll and wait without
+  an async runtime ([ADR 0004](0004-blocking-threads-no-async-runtime.md)
+  binds Fiber's Rust code, not an extension's loop).
 
 ## Rejected
 
@@ -138,6 +151,6 @@ git-distributed extension cannot run as source without a compile step.
 and near-drop-in portability of pi's extension ecosystem. Rejected because it is
 a different architecture, not a runtime knob: embedding V8 costs tens of MiB of
 RSS and a JIT, breaking the low-RSS premise; shelling out to system Node/Bun
-breaks single-binary distribution. The genuine loss is npm's existing
-libraries. Sharing code between extensions is kept, through Fiber's own
-packages.
+breaks single-binary distribution. npm's libraries stay reachable through a
+process extension, which runs Node or Bun as a separate program only when a
+person installs one.
