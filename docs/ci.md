@@ -10,7 +10,7 @@ The checks themselves are set elsewhere: tests in `docs/testing.md`, lints
 and file rules in `docs/code-quality.md`, crates and supply chain in
 `docs/dependencies.md`, budgets in `docs/performance.md`, and the tool
 definition size budget in `docs/tools.md`. What a release contains is
-[Releasing and upgrading](https://github.com/aakshintala/fiber/issues/68).
+`docs/releasing.md`.
 
 ## Runners
 
@@ -86,8 +86,9 @@ On Linux x86_64 alone:
 - for a pull request labelled `bug-fix`, its new and changed tests run
   against the base commit, and at least one must fail there
 
-One more Linux x86_64 job builds the release profile at the pull request's
-head and at its base commit. It checks that the stripped head binary is
+One more Linux x86_64 job builds the release profile for the target that
+ships, `x86_64-unknown-linux-musl` (`docs/releasing.md`), at the pull
+request's head and at its base commit. It checks that the stripped head binary is
 under 20 MiB and runs the benchmarks that gate each pull request
 (`docs/performance.md`). A timing gate compares against the base binary
 measured in the same job on the same runner.
@@ -141,8 +142,8 @@ Before the release workflow publishes anything, it:
 - measures the benchmarks on Linux arm64 and macOS arm64 and reports them,
   without gating (`docs/performance.md`)
 
-What the artifacts are, how a release is triggered and whether it is signed
-is [Releasing and upgrading](https://github.com/aakshintala/fiber/issues/68).
+What the artifacts are, how a release is triggered and how it is signed is
+`docs/releasing.md`.
 
 ## Waiting on CI
 

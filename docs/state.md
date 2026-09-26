@@ -181,11 +181,9 @@ There is no layout version marker. The first change to this layout adds a
 file `layout` at the top of Fiber home containing `2`; a missing file means
 layout 1. `fiber upgrade` changes only the Fiber binary and `extensions/`;
 it never touches sessions, config, rules, approvals, credentials or extension
-data. It
-replaces the binary by renaming a new file over it, never by writing in place,
-so a running session keeps the file it launched from; macOS kills a process
-whose signed binary is changed underneath it. How the
-binary is fetched and replaced is not settled here.
+data. It replaces the binary by renaming a new file over it, so a running
+session keeps the file it launched from. How the binary is fetched and
+replaced is `docs/releasing.md`.
 
 ## Not settled here
 
