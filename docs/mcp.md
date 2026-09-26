@@ -268,9 +268,10 @@ shared between sessions.
   cursor-delegate server works in the folder it started in unless a call names
   another, and node_repl keeps a JavaScript kernel whose variables persist
   between calls. Neither would be correct shared between sessions.
-- Each of the owner's servers takes 43 to 93 MiB
-  (`research/delegate-memory/README.md`, "MCP servers"), once per session. A
-  delegate therefore adds about 100 MiB with the owner's two daily servers.
+- The owner's one daily server, cursor-delegate, takes about 1.2 MiB on
+  macOS arm64; a Node server measured 43 to 93 MiB
+  (`research/delegate-memory/README.md`, "MCP servers"). Servers start once
+  per session, so a delegate pays for every server its session configures.
   A server that costs too much to run once per session is its author's to make
   smaller; Fiber does not share servers to hide the cost.
 - A delegate's first request waits for its own servers, as any session's does

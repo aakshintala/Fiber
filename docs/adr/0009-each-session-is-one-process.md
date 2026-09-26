@@ -28,7 +28,8 @@ process. None of the four runs a sub-agent as its own process.
 
 A delegate costs about 2 MiB as threads and 8 to 9.5 MiB as its own process:
 about 7 MiB more per delegate, or about 56 MiB at the owner's measured peak of
-8. Each of the owner's MCP servers costs 43 to 93 MiB.
+8. The owner's one daily MCP server, cursor-delegate, costs about 1.2 MiB
+(macOS arm64). A Node MCP server measured 43 to 93 MiB.
 
 ## Decision
 
@@ -66,7 +67,7 @@ about 7 MiB more per delegate, or about 56 MiB at the owner's measured peak of
   by construction.
 - No two sessions share anything in memory. Each pays for its own MCP
   servers, process extensions and model catalog: a delegate adds about
-  100 MiB with the owner's two daily MCP servers, about 1 GiB at the measured
+  10 MiB with the owner's daily MCP server, about 96 MiB at the measured
   peak of 8 delegates on macOS. A server or extension too heavy to run once
   per session is its author's to make smaller.
 - A stdio MCP server's elicitation carries no link to the call that raised
@@ -77,7 +78,7 @@ about 7 MiB more per delegate, or about 56 MiB at the owner's measured peak of
 ## Rejected
 
 A delegate as threads in its root's process. It saves about 7 MiB per
-delegate, less than one MCP server at the measured peak. It makes
+delegate, about 56 MiB at the measured peak. It makes
 `fiber serve` a multi-session process: several loops, logs, locks and sockets
 in one process, a model catalog and an MCP client called from several loops at
 once, a Lua VM per extension per session in one process, and a stop that is a
@@ -93,8 +94,8 @@ host. Restarting it for an upgrade stops every model stream and child process
 in every session, and one crash ends every session on the host.
 
 Sharing MCP servers across session trees through the daemon. It would save
-about 80 to 100 MiB per extra concurrent session, but only in about 1 active
-window in 8. It adds five costs: elicitations that cannot be attributed across
+about 1 MiB per extra concurrent session with the owner's servers, and only in
+about 1 active window in 8. It adds five costs: elicitations that cannot be attributed across
 sessions, a reload that needs a private instance, a daemon restart that
 restarts servers under running sessions, a daemon crash that removes MCP from
 every session, and a second code path for sessions started without the daemon.
@@ -102,9 +103,10 @@ Sharing across trees would need the relay that sharing within a tree was
 rejected for, below.
 
 MCP servers owned by the root and shared by its delegates. The root started
-each server once, and a delegate sent its calls up through its parent. At the
-owner's peak of 8 delegates it used 187 MiB against 1.0 GiB with servers per
-session (macOS arm64, `research/delegate-memory/README.md`). It was wrong for
+each server once, and a delegate sent its calls up through its parent. With two
+Node servers it used 187 MiB against 1.0 GiB with servers per session at the
+peak of 8 delegates (macOS arm64, `research/delegate-memory/README.md`); with
+the owner's one Rust server the difference is about 10 MiB. It was wrong for
 two of the owner's three local servers: cursor-delegate works in the folder it
 started in, so a delegate in a worktree got the root's folder, and node_repl
 keeps a JavaScript kernel whose variables every sharing session would see. It
