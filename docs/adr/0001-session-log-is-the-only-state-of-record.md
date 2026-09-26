@@ -9,9 +9,12 @@ failure was found independently in another harness: of 78 official Pi extensions
 audited, 17 held state and 2 did it correctly, the rest keeping it in closures,
 live maps or a rescan on restore, which is why rewind and resume lie there.
 
-So: **the log is the only authority**. Anything the loop, the TUI or an
-extension needs after a resume is an event or a fold of events; runtime objects
-may cache and index but never become a second truth. The log is append-only for
+So: **the log is the only authority** for what happened in a session.
+Anything the loop, the TUI or an extension needs to know about a session
+after a resume is an event or a fold of events; runtime objects may cache and
+index but never become a second truth. What describes no single session
+lives in Fiber home instead: configuration, credentials, and an extension's
+data directories (`docs/state.md`). The log is append-only for
 the life of the session, so a handoff appends new events rather than rewriting
 it, and a session directory holds no file that can contradict it. The contract
 is `docs/events.md`; the rationale and the rejected alternatives are on
@@ -19,9 +22,12 @@ is `docs/events.md`; the rationale and the rejected alternatives are on
 
 ## Consequences
 
-- Every fact a consumer needs must be an event. When the TUI or an extension
-  wants state the contract does not carry, the fix is a new event kind, never a
-  side channel — and a new kind is additive, so this is cheap on purpose.
+- Every fact a consumer needs about a session must be an event. When the TUI
+  or an extension wants state the contract does not carry, the fix is a new
+  event kind, never a side channel — and a new kind is additive, so this is
+  cheap on purpose. An extension's own state in a session is such a kind,
+  `extension_state_set` (`docs/extensions.md`, "State"), never a file beside
+  the log and never Lua globals.
 - Opening a session folds the log. That cost is bounded by indexing line offsets
   and parsing only the window a consumer asks for, not by caching the fold to
   disk. If folding ever becomes too slow, the answer is a rebuildable derived

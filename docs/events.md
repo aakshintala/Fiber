@@ -10,8 +10,11 @@ mean what it says there and nothing else.
 
 ## The rule everything else follows from
 
-**The session log is the only state of record.** Anything the loop, the TUI or
-an extension needs after a resume is an event, or a fold of events. Runtime
+**The session log is the only state of record** for what happened in a
+session. Anything the loop, the TUI or an extension needs to know about a
+session after a resume is an event, or a fold of events. Configuration,
+credentials and an extension's data directories describe no single session
+and live in Fiber home (`docs/state.md`). Runtime
 objects may cache and index; none of them is ever a second authority. No file
 beside the log holds state.
 
@@ -278,6 +281,36 @@ Behaviour is `docs/mcp.md`.
 `reloaded` is written once the new tool set is declared, and `preamble_built`
 follows it. The next model request misses the prompt cache.
 
+### Extensions
+
+Behaviour is `docs/extensions.md`.
+
+| Kind | Durable | Payload |
+|---|---|---|
+| `extension_state_set` | yes | the extension's name, `key`, the whole new `value` (JSON, at most 64 KiB), and `on_fork` (`at_point`, `latest`, `fresh`) |
+| `extension_state_unset` | yes | the extension's name and `key` |
+| `extension_ui` | no | the extension's name, and either its `status` line or a `widget` id with its lines; latest wins, and a client that attaches is sent the latest of each |
+| `extension_message` | no | the extension's name and the data its session half sent to its own TUI extension with `host.emit` |
+| `extension_exec` | yes | the extension's name, the program, its arguments and working directory, and `process` as on `tool_call_completed`; for a program an extension ran outside a tool call |
+
+Extension state is a fold: the latest `extension_state_set` or
+`extension_state_unset` for each extension and key, up to the point being
+read. A write made inside a hook is written just before the line that hook
+changed, and is not written at all if the hook fails. Any other write is
+written at the loop's next drain of its inbox ("One inbox" in
+`docs/architecture.md`), so a crash before then loses it.
+
+A fork or a rewind folds its parent's log. For each key, the `on_fork` of its
+last write up to the point decides what the new session gets:
+
+| `on_fork` | The new session gets |
+|---|---|
+| `at_point` | the value as of the point |
+| `latest` | the value at the end of the parent's log when the new session starts |
+| `fresh` | nothing |
+
+`on_fork` is a closed set: adding a value is a breaking change.
+
 ### Jobs
 
 Behaviour is `docs/tools.md` ("Background jobs"); delegates are
@@ -285,10 +318,9 @@ Behaviour is `docs/tools.md` ("Background jobs"); delegates are
 
 | Kind | Durable | Payload |
 |---|---|---|
-| `job_started` | yes | `job_id`, the `action_id` of the tool call that started it, the tool name, a short description, the output file's path |
+| `job_started` | yes | `job_id`, the `action_id` of the tool call that started it or the name of the extension that did (`host.delegate`), the tool name, a short description, the output file's path |
 | `delegate_started` | yes | `job_id`, the delegate's `session_id`, harness, model reference (role resolved), workspace, worktree path and branch when isolated, `forked_from` for a fork |
 | `job_delta` | no | progress for clients, paced like `tool_call_delta` (`docs/tools.md`, "Progress") |
-| `mcp_call_requested` | no | `request_id`, the MCP tool's name and arguments; raised by a delegate for its parent to run (`docs/mcp.md`, "Where servers run"). The call itself is the delegate's own `tool_call_*` lines |
 | `job_line` | yes | `job_id`, the batch of lines a monitor delivered to the model (cut as `docs/tools.md` describes), and a count of deliveries suppressed since the last one, when any were |
 | `delegate_finished` | yes | `job_id`, the final message (bounded, with `artifact` when cut), usage totals, worktree state (path, branch, dirty) |
 | `job_completed` | yes | `status` (`completed`, `failed`, `cancelled`), `error { code, message }`, `process` as on `tool_call_completed`, and for a failed job the tail of its output, capped |
@@ -428,6 +460,12 @@ where per-action lines carry the same information written once each. Any future
 line that summarises the turn so far reintroduces this, so it needs this
 decision overturned first. The one restatement in the contract, the final text
 on `fiber_exited`, sits outside any turn and is never read back.
+
+`extension_state_set` writes a key's whole value each time, so an extension
+that rewrites a growing value on every step would bring the quadratic log
+back within its own key. The 64 KiB cap bounds each line, and a value that
+grows with the session, such as one record per turn or per delegate, belongs
+under one key per record (`docs/extensions.md`, "State").
 
 **A torn tail is discarded.** A reader stops at the last complete line and a
 writer truncates a partial line before appending, so a power cut cannot make a
