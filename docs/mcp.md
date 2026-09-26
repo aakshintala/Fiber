@@ -240,13 +240,7 @@ different code later under the same approval.
 
 ## Error codes
 
-| Code | Meaning |
-|---|---|
-| `mcp_server_unavailable` | a call to a server that failed to start or died |
-| `mcp_tool_removed` | a call to a tool the server has since removed |
-| `mcp_cancel_requested` | a cancelled turn asked the server to stop a call, and the server may still act |
-| `mcp_required_server_failed` | a server marked `required` failed to start |
-| `mcp_server_unapproved` | a repository declares a server nobody has approved |
+The `mcp_*` codes are listed with every other code in `docs/errors.md`.
 
 ## Configuration
 

@@ -203,7 +203,10 @@ describes; the admission-ordered steering queue is the only queue.
 **Cancellation targets the turn, not the process.** What it does is the
 concurrency section of `docs/architecture.md` and adds nothing here.
 
-**Exit codes: 0 success, 1 failure, 129 SIGHUP, 130 SIGINT, 143 SIGTERM.**
+**Exit codes: 0 success, 1 failure, 2 usage, 129 SIGHUP, 130 SIGINT, 143
+SIGTERM.** Usage is Fiber called wrongly: a bad flag, two prompt sources, no
+prompt, no tty. `fiber ask` exits 1 when its turn failed; `fiber serve` exits 1
+only when the process itself failed (`docs/errors.md`, "What a caller gets").
 What a signal guarantees before the process goes is "Shutdown".
 
 ## What a caller gets back
@@ -216,6 +219,9 @@ you have `events.jsonl`, byte for byte."
   message's text so a one-shot caller reads one line and is done.
 - **Finished or died** is whether `fiber_exited` is there at all. A
   `fiber_started` with no matching `fiber_exited` means the process died.
+- **A failure before any session exists**, such as invalid configuration or a
+  missing credential, still ends stdout with a `fiber_exited` line carrying the
+  error, with no `session_id` (`docs/errors.md`, "Before a session exists").
 - **Progress** is the ephemeral lines. They carry no `seq` and never reach the
   log.
 - **After a rewind** the stream holds two sessions' lines. Filtering by each

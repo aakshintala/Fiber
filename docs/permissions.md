@@ -282,7 +282,9 @@ private channel. Claude Code makes the same distinction with
 `--permission-prompts host|none`.
 
 With no answer possible, escalation is a block and the run continues under
-the rule above until it exhausts the block budget. No answer is possible in a
+the rule above until it exhausts the block budget. The turn then completes
+`failed` with code `blocked`, so a headless caller learns the task needed
+permissions it was not given. No answer is possible in a
 session started by `fiber ask`, and in a session that has been sent `close`.
 Anywhere else, a client that leaves may come back: the session exits on the
 pending escalation and raises it again when resumed (`docs/invocation.md`,
