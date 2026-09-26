@@ -1,0 +1,25 @@
+{
+ "case": "or-completions-luna.overflow-dense",
+ "url": "https://openrouter.ai/api/v1/chat/completions",
+ "stream": false,
+ "request_bytes": 4000095,
+ "status": 200,
+ "headers": {
+  "Date": "Sat, 26 Sep 2026 07:07:42 GMT",
+  "Content-Type": "application/json",
+  "Transfer-Encoding": "chunked",
+  "Connection": "close",
+  "Server-Timing": "cfEdge;dur=1058,cfOrigin;dur=0,cfWorker;dur=7424",
+  "Access-Control-Allow-Origin": "*",
+  "X-Generation-Id": "[redacted]",
+  "access-control-expose-headers": "X-Generation-Id,X-Provider-Name,request-id,cf-ray",
+  "set-cookie": "[redacted]",
+  "Permissions-Policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
+  "Referrer-Policy": "no-referrer, strict-origin-when-cross-origin",
+  "X-Content-Type-Options": "nosniff",
+  "Server": "cloudflare",
+  "CF-RAY": "[redacted]"
+ },
+ "body": "\n         \n\n         \n\n         \n\n         \n{\"id\":\"gen-1790406455-eJnqk3ClXWKPwDsGfehv\",\"error\":{\"message\":\"Your input exceeds the context window of this model. Please adjust your input and try again.\",\"code\":400,\"metadata\":{\"error_type\":\"invalid_request\",\"provider_code\":\"context_length_exceeded\"}}}",
+ "seconds": 13.631
+}

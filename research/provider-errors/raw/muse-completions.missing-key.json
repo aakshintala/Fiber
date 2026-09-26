@@ -1,0 +1,19 @@
+{
+ "case": "muse-completions.missing-key",
+ "url": "https://api.meta.ai/v1/chat/completions",
+ "stream": false,
+ "request_bytes": 111,
+ "status": 401,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-request-id": "[redacted]",
+  "Access-Control-Allow-Origin": "*",
+  "Date": "Sat, 26 Sep 2026 07:04:51 GMT",
+  "x-route": "model-api-rust",
+  "Proxy-Status": "[redacted]",
+  "Connection": "close",
+  "Content-Length": "104"
+ },
+ "body": "{\"error\":{\"code\":\"invalid_api_key\",\"message\":\"Unauthorized\",\"param\":null,\"type\":\"authentication_error\"}}",
+ "seconds": 0.164
+}

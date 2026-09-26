@@ -1,0 +1,186 @@
+{
+ "case": "or-completions-luna.overflow-dense-stream",
+ "url": "https://openrouter.ai/api/v1/chat/completions",
+ "stream": [
+  [
+   8.235,
+   ": OPENROUTER PROCESSING"
+  ],
+  [
+   8.235,
+   ""
+  ],
+  [
+   8.651,
+   ": OPENROUTER PROCESSING"
+  ],
+  [
+   8.651,
+   ""
+  ],
+  [
+   9.07,
+   ": OPENROUTER PROCESSING"
+  ],
+  [
+   9.071,
+   ""
+  ],
+  [
+   9.493,
+   ": OPENROUTER PROCESSING"
+  ],
+  [
+   9.493,
+   ""
+  ],
+  [
+   9.913,
+   ": OPENROUTER PROCESSING"
+  ],
+  [
+   9.913,
+   ""
+  ],
+  [
+   10.34,
+   ": OPENROUTER PROCESSING"
+  ],
+  [
+   10.34,
+   ""
+  ],
+  [
+   10.75,
+   ": OPENROUTER PROCESSING"
+  ],
+  [
+   10.75,
+   ""
+  ],
+  [
+   11.172,
+   ": OPENROUTER PROCESSING"
+  ],
+  [
+   11.172,
+   ""
+  ],
+  [
+   11.591,
+   ": OPENROUTER PROCESSING"
+  ],
+  [
+   11.591,
+   ""
+  ],
+  [
+   12.01,
+   ": OPENROUTER PROCESSING"
+  ],
+  [
+   12.01,
+   ""
+  ],
+  [
+   12.437,
+   ": OPENROUTER PROCESSING"
+  ],
+  [
+   12.437,
+   ""
+  ],
+  [
+   12.852,
+   ": OPENROUTER PROCESSING"
+  ],
+  [
+   12.852,
+   ""
+  ],
+  [
+   13.288,
+   ": OPENROUTER PROCESSING"
+  ],
+  [
+   13.288,
+   ""
+  ],
+  [
+   13.869,
+   ": OPENROUTER PROCESSING"
+  ],
+  [
+   13.869,
+   ""
+  ],
+  [
+   14.11,
+   ": OPENROUTER PROCESSING"
+  ],
+  [
+   14.11,
+   ""
+  ],
+  [
+   14.535,
+   ": OPENROUTER PROCESSING"
+  ],
+  [
+   14.535,
+   ""
+  ],
+  [
+   14.952,
+   ": OPENROUTER PROCESSING"
+  ],
+  [
+   14.952,
+   ""
+  ],
+  [
+   15.374,
+   ": OPENROUTER PROCESSING"
+  ],
+  [
+   15.374,
+   ""
+  ],
+  [
+   15.79,
+   ": OPENROUTER PROCESSING"
+  ],
+  [
+   15.79,
+   ""
+  ],
+  [
+   15.866,
+   "data: {\"id\":\"gen-1790406469-0jtmXNwIRe0zQbbEK6Fd\",\"object\":\"chat.completion.chunk\",\"created\":1790406469,\"model\":\"openai/gpt-6-luna\",\"provider\":\"OpenAI\",\"choices\":[],\"error\":{\"code\":400,\"message\":\"Your input exceeds the context window of this model. Please adjust your input and try again.\",\"metadata\":{\"error_type\":\"invalid_request\",\"provider_code\":\"context_length_exceeded\"}}}"
+  ],
+  [
+   15.866,
+   ""
+  ]
+ ],
+ "request_bytes": 4000111,
+ "status": 200,
+ "headers": {
+  "Date": "Sat, 26 Sep 2026 07:07:55 GMT",
+  "Content-Type": "text/event-stream",
+  "Transfer-Encoding": "chunked",
+  "Connection": "close",
+  "Server-Timing": "cfEdge;dur=1160,cfOrigin;dur=0,cfWorker;dur=6519",
+  "Access-Control-Allow-Origin": "*",
+  "Cache-Control": "no-cache",
+  "X-Generation-Id": "[redacted]",
+  "access-control-expose-headers": "X-Generation-Id,X-Provider-Name,request-id,cf-ray",
+  "set-cookie": "[redacted]",
+  "Permissions-Policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
+  "Referrer-Policy": "no-referrer, strict-origin-when-cross-origin",
+  "X-Content-Type-Options": "nosniff",
+  "Server": "cloudflare",
+  "CF-RAY": "[redacted]"
+ },
+ "seconds": 15.868
+}

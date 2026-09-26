@@ -1,0 +1,25 @@
+{
+ "case": "or-responses-luna.bad-schema-stream",
+ "url": "https://openrouter.ai/api/v1/responses",
+ "stream": true,
+ "request_bytes": 271,
+ "status": 400,
+ "headers": {
+  "Date": "Sat, 26 Sep 2026 07:05:53 GMT",
+  "Content-Type": "application/json",
+  "Transfer-Encoding": "chunked",
+  "Connection": "close",
+  "Server-Timing": "cfEdge;dur=4,cfOrigin;dur=0,cfWorker;dur=433",
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Expose-Headers": "X-Generation-Id,X-Provider-Name,request-id,cf-ray",
+  "X-Generation-Id": "[redacted]",
+  "set-cookie": "[redacted]",
+  "Permissions-Policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
+  "Referrer-Policy": "no-referrer, strict-origin-when-cross-origin",
+  "X-Content-Type-Options": "nosniff",
+  "Server": "cloudflare",
+  "CF-RAY": "[redacted]"
+ },
+ "body": "{\"error\":{\"message\":\"Provider returned error\",\"code\":400,\"metadata\":{\"raw\":\"{\\n  \\\"error\\\": {\\n    \\\"message\\\": \\\"Invalid schema for function 'read': 'banana' is not valid under any of the given schemas.\\\",\\n    \\\"type\\\": \\\"invalid_request_error\\\",\\n    \\\"param\\\": \\\"tools[0].parameters\\\",\\n    \\\"code\\\": \\\"invalid_function_parameters\\\"\\n  }\\n}\",\"provider_name\":\"Azure\",\"is_byok\":false,\"provider_error_code\":\"invalid_function_parameters\",\"previous_errors\":[{\"code\":400,\"message\":\"Provider returned error\",\"provider_name\":\"OpenAI\",\"raw\":\"{\\n  \\\"error\\\": {\\n    \\\"message\\\": \\\"Invalid schema for function 'read': 'banana' is not valid under any of the given schemas.\\\",\\n    \\\"type\\\": \\\"invalid_request_error\\\",\\n    \\\"param\\\": \\\"tools[0].parameters\\\",\\n    \\\"code\\\": \\\"invalid_function_parameters\\\"\\n  }\\n}\"}]}},\"user_id\":\"[redacted]\"}",
+ "seconds": 0.557
+}

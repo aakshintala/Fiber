@@ -1,0 +1,19 @@
+{
+ "case": "muse-messages.overflow",
+ "url": "https://api.meta.ai/v1/messages",
+ "stream": false,
+ "request_bytes": 8400104,
+ "status": 400,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-request-id": "[redacted]",
+  "Access-Control-Allow-Origin": "*",
+  "Date": "Sat, 26 Sep 2026 07:05:24 GMT",
+  "x-route": "model-api-rust",
+  "Proxy-Status": "[redacted]",
+  "Connection": "close",
+  "Content-Length": "168"
+ },
+ "body": "{\"error\":{\"message\":\"The request contains invalid parameters. Check the request body for any errors or inconsistencies.\",\"type\":\"invalid_request_error\"},\"type\":\"error\"}",
+ "seconds": 6.816
+}

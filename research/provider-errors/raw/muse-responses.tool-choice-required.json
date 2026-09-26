@@ -1,0 +1,19 @@
+{
+ "case": "muse-responses.tool-choice-required",
+ "url": "https://api.meta.ai/v1/responses",
+ "stream": false,
+ "request_bytes": 291,
+ "status": 400,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-request-id": "[redacted]",
+  "Access-Control-Allow-Origin": "*",
+  "Date": "Sat, 26 Sep 2026 07:05:05 GMT",
+  "x-route": "model-api-rust",
+  "Proxy-Status": "[redacted]",
+  "Connection": "close",
+  "Content-Length": "219"
+ },
+ "body": "{\"error\":{\"code\":null,\"message\":\"only `\\\"auto\\\"` is supported for `tool_choice`. `\\\"none\\\"`, `\\\"required\\\"`, and named function choices are not currently supported\",\"param\":\"tool_choice\",\"type\":\"invalid_request_error\"}}",
+ "seconds": 0.323
+}

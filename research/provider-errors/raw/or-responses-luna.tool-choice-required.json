@@ -1,0 +1,25 @@
+{
+ "case": "or-responses-luna.tool-choice-required",
+ "url": "https://openrouter.ai/api/v1/responses",
+ "stream": false,
+ "request_bytes": 282,
+ "status": 200,
+ "headers": {
+  "Date": "Sat, 26 Sep 2026 07:05:53 GMT",
+  "Content-Type": "application/json",
+  "Transfer-Encoding": "chunked",
+  "Connection": "close",
+  "Server-Timing": "cfEdge;dur=3,cfOrigin;dur=0,cfWorker;dur=408",
+  "Access-Control-Allow-Origin": "*",
+  "X-Generation-Id": "[redacted]",
+  "access-control-expose-headers": "X-Generation-Id,X-Provider-Name,request-id,cf-ray",
+  "set-cookie": "[redacted]",
+  "Permissions-Policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
+  "Referrer-Policy": "no-referrer, strict-origin-when-cross-origin",
+  "X-Content-Type-Options": "nosniff",
+  "Server": "cloudflare",
+  "CF-RAY": "[redacted]"
+ },
+ "body": "\n         \n\n         \n{\"id\":\"gen-1790406353-O2dDQpHEQ8N9OemgaLka\",\"object\":\"response\",\"created_at\":1790406353,\"model\":\"openai/gpt-6-luna\",\"status\":\"completed\",\"completed_at\":1790406354,\"output\":[{\"id\":\"fc_tmp_jz5hmqnxo6\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_ve9snhs5wx4NnS48CmkBYmb3\",\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"/dev\"}],\"error\":null,\"incomplete_details\":null,\"tools\":[{\"type\":\"function\",\"name\":\"read\",\"description\":\"Read a file.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]},\"strict\":null}],\"tool_choice\":\"required\",\"parallel_tool_calls\":true,\"max_output_tokens\":16,\"temperature\":1,\"top_p\":1,\"presence_penalty\":0,\"frequency_penalty\":0,\"top_logprobs\":0,\"max_tool_calls\":null,\"metadata\":{},\"background\":false,\"previous_response_id\":null,\"service_tier\":\"default\",\"truncation\":\"disabled\",\"store\":false,\"instructions\":null,\"text\":{\"format\":{\"type\":\"text\"}},\"reasoning\":{\"context\":\"all_turns\",\"effort\":\"medium\",\"mode\":\"standard\",\"summary\":\"detailed\"},\"safety_identifier\":null,\"prompt_cache_key\":null,\"prompt_cache_options\":null,\"usage\":{\"input_tokens\":42,\"input_tokens_details\":{\"cached_tokens\":0},\"output_tokens\":16,\"output_tokens_details\":{\"reasoning_tokens\":0},\"total_tokens\":58,\"cost\":0.0000122,\"is_byok\":false,\"cost_details\":{\"upstream_inference_cost\":0.0000122,\"upstream_inference_input_cost\":0.0000042,\"upstream_inference_output_cost\":0.000008}}}",
+ "seconds": 1.289
+}

@@ -1,0 +1,26 @@
+{
+ "case": "or-messages-haiku.tool-choice-required",
+ "url": "https://openrouter.ai/api/v1/messages",
+ "stream": false,
+ "request_bytes": 305,
+ "status": 200,
+ "headers": {
+  "Date": "Sat, 26 Sep 2026 07:06:03 GMT",
+  "Content-Type": "application/json",
+  "Transfer-Encoding": "chunked",
+  "Connection": "close",
+  "Server-Timing": "cfEdge;dur=3,cfOrigin;dur=0,cfWorker;dur=739",
+  "Access-Control-Allow-Origin": "*",
+  "X-Generation-Id": "[redacted]",
+  "access-control-expose-headers": "X-Generation-Id,X-Provider-Name,request-id,cf-ray",
+  "request-id": "[redacted]",
+  "set-cookie": "[redacted]",
+  "Permissions-Policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
+  "Referrer-Policy": "no-referrer, strict-origin-when-cross-origin",
+  "X-Content-Type-Options": "nosniff",
+  "Server": "cloudflare",
+  "CF-RAY": "[redacted]"
+ },
+ "body": "{\"id\":\"gen-1790406362-kkcMV32igqSgxItiuvfn\",\"type\":\"message\",\"role\":\"assistant\",\"container\":null,\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_bdrk_011hPPuXTvuh4xeQkcHnm9KW\",\"caller\":{\"type\":\"direct\"},\"name\":\"read\",\"input\":{}}],\"model\":\"anthropic/claude-haiku-4.5\",\"stop_reason\":\"max_tokens\",\"stop_details\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":647,\"output_tokens\":16,\"output_tokens_details\":{\"thinking_tokens\":0},\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":0},\"inference_geo\":null,\"server_tool_use\":null,\"service_tier\":\"standard\",\"speed\":\"standard\",\"cost\":0.000727,\"is_byok\":false,\"cost_details\":{\"upstream_inference_cost\":0.000727,\"upstream_inference_prompt_cost\":0.000647,\"upstream_inference_completions_cost\":0.00008}},\"context_management\":null,\"provider\":\"Amazon Bedrock\"}",
+ "seconds": 0.96
+}

@@ -1,0 +1,74 @@
+{
+ "case": "or-completions-luna.ok-stream",
+ "url": "https://openrouter.ai/api/v1/chat/completions",
+ "stream": [
+  [
+   0.909,
+   ": OPENROUTER PROCESSING"
+  ],
+  [
+   0.909,
+   ""
+  ],
+  [
+   1.044,
+   "data: {\"id\":\"gen-1790406342-rGYg44B95geUfSdentjK\",\"object\":\"chat.completion.chunk\",\"created\":1790406342,\"model\":\"openai/gpt-6-luna\",\"provider\":\"OpenAI\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\",\"reasoning\":null,\"reasoning_details\":[{\"type\":\"reasoning.encrypted\",\"data\":\"gAAAAABqt27HAG78nShp9KWTnXW1Paz32NVfnCiEYWImbUGe_UM5jRL2i0DGvgkMaBsXck52tqhV5qZOmU1fFH-lH2DeqGXhHH4NQIM9K7ZNgE0He554xzjnV1fXsfykWv9g05NA6nm8eWKpA1yLEVXMO5rJePFcs4MlS56wIh3vUHSpRlLle3cww4WxdzoJt5XZQAPkB67gTU8dueFw00SUoVE23ywko9DGUBz8CPRtMxe3dXe4NQSRD7k6SVx1VZbUIABIb5OmFIWCYAdKJoHvMrSLGMhISch0w47ICmGV5mHe9YiSqiyZUr_QJhLxc4tsUQmP4N5kqnhHp9kqq6if58oM1hU2XQGPj25Y7N74IS7LyEm5FtbYYJ7nrdlyT_8wcXgZxHsxLjsThBqktXerj9C0rciVgxmPXTt5RYtBNmyt5JzKdBLswp-xWWAloN25yMh5E1enPC8zyrgMX1wkyOZnQANw421lJ1h-gBm-Yl-zTmDp5nSROWyERXDV5JttM93kGZZ2Y4rYdZGRsRqKRjnyff8Y1H19t_yORWXK0EscCep83IazqxTi4paqn8ml8okytxH9RP49gbs4sukmUdt8UhlsjGIEa0ArsVgdaeKP9w7LNUfQRozRZFh1MUTLd48V2zwwBRUM038zxaeRmVi3i5fJdHe35LcolII29MbViERX5T-_pn5Hfmfsk3D62ObOoTZ0Ki2GPNB4GOInxkfv9Bbil7iJn8lejLxvc4cDrC7cZykwVNgxcNVdRQuX7vu3NwUNvloPhN2NY7_CTK7nDXWtTbS-1-xp3bHVLwQQdTWsgMpU92vu6Jlact1VdPsLB8w5oM0-zmGsKM0vjy0M2TOT7OpT7vcIiHjOPyyEbF0Ujh48F9EppMq6ecDEbL4Xxa-qXf0t5xYBL6HA8Cn6_z69r-Q8c6dv3xjea6eITFPmXu02KiW5jfgniSyGfN-58Xs-EUSCAR5BFu8qXIryUSy_YgWPGfGebNTGTwj5C9WuiztElC8oLweAHaZFgECrL55BXbq2YmWIAImtMhMy9Pez2c6bHejv9cPOrhdNNfcV296QkqxN9pt-jIeszGUWqvE2Es-cssFGUQLOtlOxsqA8wmg_35YEQZjECG2nKQNP4fllmOGbPZ67HNcqzpFo6OzTqTrkQ7vAk2ax71QkkwU-f-Sl1fK42L245U5KGQzt8SKwc22n6G_tFcOZ80qqOTlyxmmxTqrO8LegqUsZVjzAK9l5ygFMgLByZAlOSMj6D0jpzh1gyHy-nIixChKsVGukUCyfJb3o8FQuAJHy3R_6UHYsOtoxepETeAK3iTvbTcQGRAZJt282OcOfHXNignK_p0M8NVS3I8i-cvXBOWVhiQ==.eyJlbmRwb2ludF9zbHVnIjoib3BlbmFpL2dwdC02LWx1bmEtMjAyNjA5MjJ8b3BlbmFpIn0\",\"format\":\"openai-responses-v1\",\"id\":\"rs_03fed4cae8b91c98016ab76ec7386087d19a95e978ad4df33e\",\"index\":0}]},\"finish_reason\":null,\"native_finish_reason\":null}]}"
+  ],
+  [
+   1.044,
+   ""
+  ],
+  [
+   1.122,
+   "data: {\"id\":\"gen-1790406342-rGYg44B95geUfSdentjK\",\"object\":\"chat.completion.chunk\",\"created\":1790406342,\"model\":\"openai/gpt-6-luna\",\"provider\":\"OpenAI\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}"
+  ],
+  [
+   1.122,
+   ""
+  ],
+  [
+   1.166,
+   "data: {\"id\":\"gen-1790406342-rGYg44B95geUfSdentjK\",\"object\":\"chat.completion.chunk\",\"created\":1790406342,\"model\":\"openai/gpt-6-luna\",\"provider\":\"OpenAI\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\",\"reasoning\":null},\"finish_reason\":\"stop\",\"native_finish_reason\":\"completed\"}]}"
+  ],
+  [
+   1.166,
+   ""
+  ],
+  [
+   1.166,
+   "data: {\"id\":\"gen-1790406342-rGYg44B95geUfSdentjK\",\"object\":\"chat.completion.chunk\",\"created\":1790406342,\"model\":\"openai/gpt-6-luna\",\"provider\":\"OpenAI\",\"service_tier\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\"},\"finish_reason\":\"stop\",\"native_finish_reason\":\"completed\"}],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":16,\"total_tokens\":25,\"cost\":0.0000089,\"is_byok\":false,\"prompt_tokens_details\":{\"cached_tokens\":0,\"cache_write_tokens\":0,\"audio_tokens\":0,\"video_tokens\":0},\"cost_details\":{\"upstream_inference_cost\":0.0000089,\"upstream_inference_prompt_cost\":9e-7,\"upstream_inference_completions_cost\":0.000008},\"completion_tokens_details\":{\"reasoning_tokens\":9,\"image_tokens\":0,\"audio_tokens\":0}}}"
+  ],
+  [
+   1.166,
+   ""
+  ],
+  [
+   1.174,
+   "data: [DONE]"
+  ],
+  [
+   1.174,
+   ""
+  ]
+ ],
+ "request_bytes": 118,
+ "status": 200,
+ "headers": {
+  "Date": "Sat, 26 Sep 2026 07:05:42 GMT",
+  "Content-Type": "text/event-stream",
+  "Transfer-Encoding": "chunked",
+  "Connection": "close",
+  "Server-Timing": "cfEdge;dur=3,cfOrigin;dur=0,cfWorker;dur=372",
+  "Access-Control-Allow-Origin": "*",
+  "Cache-Control": "no-cache",
+  "X-Generation-Id": "[redacted]",
+  "access-control-expose-headers": "X-Generation-Id,X-Provider-Name,request-id,cf-ray",
+  "set-cookie": "[redacted]",
+  "Permissions-Policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
+  "Referrer-Policy": "no-referrer, strict-origin-when-cross-origin",
+  "X-Content-Type-Options": "nosniff",
+  "Server": "cloudflare",
+  "CF-RAY": "[redacted]"
+ },
+ "seconds": 1.176
+}

@@ -1,0 +1,19 @@
+{
+ "case": "muse-messages.missing-key",
+ "url": "https://api.meta.ai/v1/messages",
+ "stream": false,
+ "request_bytes": 111,
+ "status": 401,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-request-id": "[redacted]",
+  "Access-Control-Allow-Origin": "*",
+  "Date": "Sat, 26 Sep 2026 07:05:16 GMT",
+  "x-route": "model-api-rust",
+  "Proxy-Status": "[redacted]",
+  "Connection": "close",
+  "Content-Length": "81"
+ },
+ "body": "{\"error\":{\"message\":\"Unauthorized\",\"type\":\"authentication_error\"},\"type\":\"error\"}",
+ "seconds": 0.323
+}

@@ -1,0 +1,19 @@
+{
+ "case": "muse-responses.overflow-stream",
+ "url": "https://api.meta.ai/v1/responses",
+ "stream": true,
+ "request_bytes": 8400093,
+ "status": 400,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-request-id": "[redacted]",
+  "Access-Control-Allow-Origin": "*",
+  "Date": "Sat, 26 Sep 2026 07:05:14 GMT",
+  "x-route": "model-api-rust",
+  "Proxy-Status": "[redacted]",
+  "Connection": "close",
+  "Content-Length": "178"
+ },
+ "body": "{\"error\":{\"code\":null,\"message\":\"The request contains invalid parameters. Check the request body for any errors or inconsistencies.\",\"param\":null,\"type\":\"invalid_request_error\"}}",
+ "seconds": 4.34
+}

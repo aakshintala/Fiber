@@ -1,0 +1,26 @@
+{
+ "case": "or-messages-haiku.overflow",
+ "url": "https://openrouter.ai/api/v1/messages",
+ "stream": false,
+ "request_bytes": 1560104,
+ "status": 400,
+ "headers": {
+  "Date": "Sat, 26 Sep 2026 07:06:03 GMT",
+  "Content-Type": "application/json",
+  "Transfer-Encoding": "chunked",
+  "Connection": "close",
+  "Server-Timing": "cfEdge;dur=483,cfOrigin;dur=0,cfWorker;dur=29",
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Expose-Headers": "X-Generation-Id,X-Provider-Name,request-id,cf-ray",
+  "X-Generation-Id": "[redacted]",
+  "request-id": "[redacted]",
+  "set-cookie": "[redacted]",
+  "Permissions-Policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
+  "Referrer-Policy": "no-referrer, strict-origin-when-cross-origin",
+  "X-Content-Type-Options": "nosniff",
+  "Server": "cloudflare",
+  "CF-RAY": "[redacted]"
+ },
+ "body": "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"This endpoint's maximum context length is 200000 tokens. However, you requested about 390016 tokens (390000 of text input, 16 in the output). Please reduce the length of either one, or use the context-compression plugin to compress your prompt automatically.\",\"error_type\":\"invalid_request\"},\"request_id\":\"gen-1790406363-6nn9APEkeB66mDjRTV2d\",\"metadata\":{\"provider_name\":null}}",
+ "seconds": 0.629
+}

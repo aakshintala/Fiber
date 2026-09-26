@@ -1,0 +1,26 @@
+{
+ "case": "or-messages-haiku.unknown-model",
+ "url": "https://openrouter.ai/api/v1/messages",
+ "stream": false,
+ "request_bytes": 108,
+ "status": 400,
+ "headers": {
+  "Date": "Sat, 26 Sep 2026 07:05:59 GMT",
+  "Content-Type": "application/json",
+  "Transfer-Encoding": "chunked",
+  "Connection": "close",
+  "Server-Timing": "cfEdge;dur=2,cfOrigin;dur=0,cfWorker;dur=11",
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Expose-Headers": "X-Generation-Id,X-Provider-Name,request-id,cf-ray",
+  "X-Generation-Id": "[redacted]",
+  "request-id": "[redacted]",
+  "set-cookie": "[redacted]",
+  "Permissions-Policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
+  "Referrer-Policy": "no-referrer, strict-origin-when-cross-origin",
+  "X-Content-Type-Options": "nosniff",
+  "Server": "cloudflare",
+  "CF-RAY": "[redacted]"
+ },
+ "body": "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"anthropic/no-such-model is not a valid model ID\",\"error_type\":\"invalid_request\"},\"request_id\":\"gen-1790406359-eUYket6e4NujNup9Cwxh\"}",
+ "seconds": 0.214
+}

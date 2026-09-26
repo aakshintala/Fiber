@@ -1,0 +1,19 @@
+{
+ "case": "muse-responses.unknown-model",
+ "url": "https://api.meta.ai/v1/responses",
+ "stream": false,
+ "request_bytes": 71,
+ "status": 404,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-request-id": "[redacted]",
+  "Access-Control-Allow-Origin": "*",
+  "Date": "Sat, 26 Sep 2026 07:05:04 GMT",
+  "x-route": "model-api-rust",
+  "Proxy-Status": "[redacted]",
+  "Connection": "close",
+  "Content-Length": "127"
+ },
+ "body": "{\"error\":{\"code\":\"model_not_found\",\"message\":\"The requested model was not found.\",\"param\":null,\"type\":\"invalid_request_error\"}}",
+ "seconds": 0.187
+}

@@ -1,0 +1,24 @@
+{
+ "case": "muse-messages.max-tokens-huge",
+ "url": "https://api.meta.ai/v1/messages",
+ "stream": false,
+ "request_bytes": 117,
+ "status": 429,
+ "headers": {
+  "Content-Type": "application/json",
+  "Retry-After": "60",
+  "x-ratelimit-limit-requests": "150",
+  "x-ratelimit-remaining-requests": "141",
+  "x-ratelimit-limit-tokens": "3000000",
+  "x-ratelimit-remaining-tokens": "2999974",
+  "x-request-id": "[redacted]",
+  "Access-Control-Allow-Origin": "*",
+  "Date": "Sat, 26 Sep 2026 07:05:17 GMT",
+  "x-route": "model-api-rust",
+  "Proxy-Status": "[redacted]",
+  "Connection": "close",
+  "Content-Length": "191"
+ },
+ "body": "{\"error\":{\"message\":\"Output token rate limit exceeded. Try lowering max_output_tokens to reduce reserved capacity. Please retry after a brief wait.\",\"type\":\"rate_limit_error\"},\"type\":\"error\"}",
+ "seconds": 0.246
+}
