@@ -3,7 +3,7 @@
 # simulate a Fiber crash), waits, then inspects which marker processes
 # are still alive.
 set -u
-cd /tmp/fiber-wt-shutdown-crash/research/shutdown
+cd "$(dirname "$0")"
 
 echo "=== uname -a ==="
 uname -a

@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 
-WORKDIR = "/tmp/fiber-wt-shutdown-crash/research/shutdown"
+WORKDIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def ps_snapshot(label):

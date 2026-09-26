@@ -16,7 +16,7 @@ import os
 import subprocess
 import time
 
-WORKDIR = "/tmp/fiber-wt-shutdown-crash/research/shutdown"
+WORKDIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def main():

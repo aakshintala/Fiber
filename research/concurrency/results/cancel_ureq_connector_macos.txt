@@ -1,0 +1,50 @@
+Darwin 25.6.0 arm64
+Apple M3 Pro
+rustc 1.98.1 (48a229cea 2026-09-01)
+cancel-via-connector http shutdown after 97.7us result=Err(Peer disconnected)
+cancel-via-connector http shutdown after 85.5us result=Err(Peer disconnected)
+cancel-via-connector http shutdown after 31.5us result=Err(Peer disconnected)
+cancel-via-connector http shutdown after 56.0us result=Err(Peer disconnected)
+cancel-via-connector http shutdown after 63.6us result=Err(Peer disconnected)
+cancel-via-connector http shutdown after 78.8us result=Err(Peer disconnected)
+cancel-via-connector http shutdown after 68.3us result=Err(Peer disconnected)
+cancel-via-connector http shutdown after 73.9us result=Err(Peer disconnected)
+cancel-via-connector http shutdown after 84.9us result=Err(Peer disconnected)
+cancel-via-connector http shutdown after 77.6us result=Err(Peer disconnected)
+cancel-via-connector http shutdown after 67.9us result=Err(Peer disconnected)
+cancel-via-connector http shutdown after 68.2us result=Err(Peer disconnected)
+cancel-via-connector http shutdown after 30.8us result=Err(Peer disconnected)
+cancel-via-connector http shutdown after 68.9us result=Err(Peer disconnected)
+cancel-via-connector http shutdown after 67.2us result=Err(Peer disconnected)
+cancel-via-connector http shutdown after 71.5us result=Err(Peer disconnected)
+cancel-via-connector http shutdown after 67.2us result=Err(Peer disconnected)
+cancel-via-connector http shutdown after 66.9us result=Err(Peer disconnected)
+cancel-via-connector http shutdown after 68.1us result=Err(Peer disconnected)
+cancel-via-connector http shutdown after 69.8us result=Err(Peer disconnected)
+cancel-via-connector http summary n=20 median=68.3us min=30.8us max=97.7us
+cancel-via-connector https shutdown after 69.3us result=Err(Peer disconnected)
+cancel-via-connector https shutdown after 45.4us result=Err(Peer disconnected)
+cancel-via-connector https shutdown after 68.6us result=Err(Peer disconnected)
+cancel-via-connector https shutdown after 62.3us result=Err(Peer disconnected)
+cancel-via-connector https shutdown after 78.0us result=Err(Peer disconnected)
+cancel-via-connector https shutdown after 70.0us result=Err(Peer disconnected)
+cancel-via-connector https shutdown after 45.5us result=Err(Peer disconnected)
+cancel-via-connector https shutdown after 49.5us result=Err(Peer disconnected)
+cancel-via-connector https shutdown after 67.3us result=Err(Peer disconnected)
+cancel-via-connector https shutdown after 47.0us result=Err(Peer disconnected)
+cancel-via-connector https shutdown after 69.6us result=Err(Peer disconnected)
+cancel-via-connector https shutdown after 72.5us result=Err(Peer disconnected)
+cancel-via-connector https shutdown after 42.1us result=Err(Peer disconnected)
+cancel-via-connector https shutdown after 40.7us result=Err(Peer disconnected)
+cancel-via-connector https shutdown after 38.5us result=Err(Peer disconnected)
+cancel-via-connector https shutdown after 64.6us result=Err(Peer disconnected)
+cancel-via-connector https shutdown after 31.5us result=Err(Peer disconnected)
+cancel-via-connector https shutdown after 74.4us result=Err(Peer disconnected)
+cancel-via-connector https shutdown after 73.3us result=Err(Peer disconnected)
+cancel-via-connector https shutdown after 86.5us result=Err(Peer disconnected)
+cancel-via-connector https summary n=20 median=67.3us min=31.5us max=86.5us
+cancel-via-connector chunked +0.0ms bytes=15 "data: event-0\n\n"
+cancel-via-connector chunked +55.1ms bytes=15 "data: event-1\n\n"
+cancel-via-connector chunked +110.2ms bytes=15 "data: event-2\n\n"
+cancel-via-connector chunked +165.3ms bytes=15 "data: event-3\n\n"
+cancel-via-connector chunked decoded=true chunks=4

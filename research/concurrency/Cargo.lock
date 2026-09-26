@@ -308,6 +308,8 @@ dependencies = [
 name = "cancel_ureq_connector"
 version = "0.1.0"
 dependencies = [
+ "rcgen",
+ "rustls 0.23.45",
  "sse_server",
  "ureq",
 ]
