@@ -153,6 +153,8 @@ result. `turn_completed` is `failed`, with `error` set to the cause, on:
   "When a hook fails")
 - `blocked`: with no human to answer, the session used up its block budget
   (`docs/permissions.md`, "Headless")
+- `output_truncated`: a second reply in a row cut off by the output-token limit
+  (`docs/loop.md`, "A reply cut off by the output limit")
 
 ## Registry
 
@@ -186,6 +188,7 @@ Every code Fiber emits. "Where" names the lines that carry it.
 | `nonzero_exit` | tool call, job | a process exited nonzero |
 | `orphaned` | job | the process that ran the job died |
 | `output_cap` | job | a job's output file passed 5 GB |
+| `output_truncated` | tool call, turn | a reply was cut off by the output-token limit, so its calls did not run |
 | `provider_unavailable` | model call, turn | a provider server error or overload |
 | `quota_exceeded` | model call, turn | a quota, billing or subscription limit |
 | `rate_limited` | model call, turn | the provider rate-limited the request |
@@ -220,5 +223,3 @@ are `docs/invocation.md`, "Driver commands".
   code `fiber serve` exits with then.
 - Rate-limit, overload, quota, billing and refusal bodies were not reached by
   the probe; their matches rest on protocol documentation until one is seen.
-- A step limit, if [The turn](https://github.com/aakshintala/fiber/issues/112)
-  adds one, names its own turn code here.
