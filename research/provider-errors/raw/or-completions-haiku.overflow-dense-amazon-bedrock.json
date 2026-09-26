@@ -1,0 +1,25 @@
+{
+ "case": "or-completions-haiku.overflow-dense-amazon-bedrock",
+ "url": "https://openrouter.ai/api/v1/chat/completions",
+ "stream": false,
+ "request_bytes": 700146,
+ "status": 400,
+ "headers": {
+  "Date": "Sat, 26 Sep 2026 07:07:15 GMT",
+  "Content-Type": "application/json",
+  "Transfer-Encoding": "chunked",
+  "Connection": "close",
+  "Server-Timing": "cfEdge;dur=225,cfOrigin;dur=0,cfWorker;dur=2349",
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Expose-Headers": "X-Generation-Id,X-Provider-Name,request-id,cf-ray",
+  "X-Generation-Id": "[redacted]",
+  "set-cookie": "[redacted]",
+  "Permissions-Policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
+  "Referrer-Policy": "no-referrer, strict-origin-when-cross-origin",
+  "X-Content-Type-Options": "nosniff",
+  "Server": "cloudflare",
+  "CF-RAY": "[redacted]"
+ },
+ "body": "{\"error\":{\"message\":\"Provider returned error\",\"code\":400,\"metadata\":{\"raw\":\"{\\\"message\\\":\\\"prompt is too long: 602006 tokens > 200000 maximum\\\"}\",\"provider_name\":\"Amazon Bedrock\",\"is_byok\":false}},\"user_id\":\"[redacted]\"}",
+ "seconds": 2.712
+}

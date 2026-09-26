@@ -1,0 +1,25 @@
+{
+ "case": "or-completions-haiku.bad-schema",
+ "url": "https://openrouter.ai/api/v1/chat/completions",
+ "stream": false,
+ "request_bytes": 305,
+ "status": 400,
+ "headers": {
+  "Date": "Sat, 26 Sep 2026 07:05:38 GMT",
+  "Content-Type": "application/json",
+  "Transfer-Encoding": "chunked",
+  "Connection": "close",
+  "Server-Timing": "cfEdge;dur=3,cfOrigin;dur=0,cfWorker;dur=1288",
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Expose-Headers": "X-Generation-Id,X-Provider-Name,request-id,cf-ray",
+  "X-Generation-Id": "[redacted]",
+  "set-cookie": "[redacted]",
+  "Permissions-Policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
+  "Referrer-Policy": "no-referrer, strict-origin-when-cross-origin",
+  "X-Content-Type-Options": "nosniff",
+  "Server": "cloudflare",
+  "CF-RAY": "[redacted]"
+ },
+ "body": "{\"error\":{\"message\":\"Provider returned error\",\"code\":400,\"metadata\":{\"raw\":\"{\\\"type\\\":\\\"error\\\",\\\"error\\\":{\\\"type\\\":\\\"invalid_request_error\\\",\\\"message\\\":\\\"tools.0.custom.input_schema: JSON schema is invalid. It must match JSON Schema draft 2020-12 (https://json-schema.org/draft/2020-12). Learn more about tool use at https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview.\\\"},\\\"request_id\\\":\\\"req_011CfRdJ6VHGLDsE7hCK2YUh\\\"}\",\"provider_name\":\"Azure\",\"is_byok\":false,\"previous_errors\":[{\"code\":400,\"message\":\"Provider returned error\",\"provider_name\":\"Amazon Bedrock\",\"raw\":\"{\\\"message\\\":\\\"tools.0.custom.input_schema: JSON schema is invalid. It must match JSON Schema draft 2020-12 (https://json-schema.org/draft/2020-12). Learn more about tool use at https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview.\\\"}\"},{\"code\":400,\"message\":\"Provider returned error\",\"provider_name\":\"Anthropic\",\"raw\":\"{\\\"type\\\":\\\"error\\\",\\\"error\\\":{\\\"type\\\":\\\"invalid_request_error\\\",\\\"message\\\":\\\"tools.0.custom.input_schema: JSON schema is invalid. It must match JSON Schema draft 2020-12 (https://json-schema.org/draft/2020-12). Learn more about tool use at https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview.\\\"},\\\"request_id\\\":\\\"req_011CfRdJ3i6FR23bxJVLuHUB\\\"}\"},{\"code\":400,\"message\":\"Provider returned error\",\"provider_name\":\"Google\",\"raw\":\"{\\\"type\\\":\\\"error\\\",\\\"error\\\":{\\\"type\\\":\\\"invalid_request_error\\\",\\\"message\\\":\\\"tools.0.custom.input_schema: JSON schema is invalid. It must match JSON Schema draft 2020-12 (https://json-schema.org/draft/2020-12). Learn more about tool use at https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview.\\\"},\\\"request_id\\\":\\\"req_vrtx_011CfRdJ4VjAxB8oeG7ap9EC\\\"}\"}]}},\"user_id\":\"[redacted]\"}",
+ "seconds": 1.418
+}

@@ -1,0 +1,19 @@
+{
+ "case": "muse-messages.unknown-model",
+ "url": "https://api.meta.ai/v1/messages",
+ "stream": false,
+ "request_bytes": 98,
+ "status": 404,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-request-id": "[redacted]",
+  "Access-Control-Allow-Origin": "*",
+  "Date": "Sat, 26 Sep 2026 07:05:16 GMT",
+  "x-route": "model-api-rust",
+  "Proxy-Status": "[redacted]",
+  "Connection": "close",
+  "Content-Length": "96"
+ },
+ "body": "{\"error\":{\"message\":\"Model not found or access denied\",\"type\":\"not_found_error\"},\"type\":\"error\"}",
+ "seconds": 0.204
+}

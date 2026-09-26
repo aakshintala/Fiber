@@ -1,0 +1,25 @@
+{
+ "case": "or-completions-haiku.overflow-dense-anthropic-stream",
+ "url": "https://openrouter.ai/api/v1/chat/completions",
+ "stream": true,
+ "request_bytes": 700157,
+ "status": 400,
+ "headers": {
+  "Date": "Sat, 26 Sep 2026 07:07:12 GMT",
+  "Content-Type": "application/json",
+  "Transfer-Encoding": "chunked",
+  "Connection": "close",
+  "Server-Timing": "cfEdge;dur=194,cfOrigin;dur=0,cfWorker;dur=311",
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Expose-Headers": "X-Generation-Id,X-Provider-Name,request-id,cf-ray",
+  "X-Generation-Id": "[redacted]",
+  "set-cookie": "[redacted]",
+  "Permissions-Policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
+  "Referrer-Policy": "no-referrer, strict-origin-when-cross-origin",
+  "X-Content-Type-Options": "nosniff",
+  "Server": "cloudflare",
+  "CF-RAY": "[redacted]"
+ },
+ "body": "{\"error\":{\"message\":\"Provider returned error\",\"code\":400,\"metadata\":{\"raw\":\"{\\\"type\\\":\\\"error\\\",\\\"error\\\":{\\\"type\\\":\\\"invalid_request_error\\\",\\\"message\\\":\\\"prompt is too long: 602006 tokens > 200000 maximum\\\"},\\\"request_id\\\":\\\"req_011CfRdQzeVVbVRZyykc6VhF\\\"}\",\"provider_name\":\"Anthropic\",\"is_byok\":false}},\"user_id\":\"[redacted]\"}",
+ "seconds": 0.646
+}

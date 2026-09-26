@@ -1,0 +1,25 @@
+{
+ "case": "or-completions-luna.tool-choice-required",
+ "url": "https://openrouter.ai/api/v1/chat/completions",
+ "stream": false,
+ "request_bytes": 323,
+ "status": 200,
+ "headers": {
+  "Date": "Sat, 26 Sep 2026 07:05:45 GMT",
+  "Content-Type": "application/json",
+  "Transfer-Encoding": "chunked",
+  "Connection": "close",
+  "Server-Timing": "cfEdge;dur=8,cfOrigin;dur=0,cfWorker;dur=300",
+  "Access-Control-Allow-Origin": "*",
+  "X-Generation-Id": "[redacted]",
+  "access-control-expose-headers": "X-Generation-Id,X-Provider-Name,request-id,cf-ray",
+  "set-cookie": "[redacted]",
+  "Permissions-Policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
+  "Referrer-Policy": "no-referrer, strict-origin-when-cross-origin",
+  "X-Content-Type-Options": "nosniff",
+  "Server": "cloudflare",
+  "CF-RAY": "[redacted]"
+ },
+ "body": "\n         \n{\"id\":\"gen-1790406345-nrHiNFixwb3AzTccjGae\",\"object\":\"chat.completion\",\"created\":1790406345,\"model\":\"openai/gpt-6-luna\",\"provider\":\"OpenAI\",\"system_fingerprint\":null,\"service_tier\":\"default\",\"choices\":[{\"index\":0,\"logprobs\":null,\"finish_reason\":\"tool_calls\",\"native_finish_reason\":\"max_output_tokens\",\"message\":{\"role\":\"assistant\",\"content\":null,\"refusal\":null,\"reasoning\":null,\"tool_calls\":[{\"type\":\"function\",\"index\":0,\"id\":\"call_m13g3HGLJCV53RZpnmIaKTUZ\",\"function\":{\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"/dev\"}}]}}],\"usage\":{\"prompt_tokens\":42,\"completion_tokens\":16,\"total_tokens\":58,\"cost\":0.0000122,\"is_byok\":false,\"prompt_tokens_details\":{\"cached_tokens\":0,\"cache_write_tokens\":0,\"audio_tokens\":0,\"video_tokens\":0},\"cost_details\":{\"upstream_inference_cost\":0.0000122,\"upstream_inference_prompt_cost\":0.0000042,\"upstream_inference_completions_cost\":0.000008},\"completion_tokens_details\":{\"reasoning_tokens\":0,\"image_tokens\":0,\"audio_tokens\":0}}}",
+ "seconds": 0.83
+}

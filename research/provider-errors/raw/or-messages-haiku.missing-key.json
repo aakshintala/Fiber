@@ -1,0 +1,24 @@
+{
+ "case": "or-messages-haiku.missing-key",
+ "url": "https://openrouter.ai/api/v1/messages",
+ "stream": false,
+ "request_bytes": 111,
+ "status": 401,
+ "headers": {
+  "Date": "Sat, 26 Sep 2026 07:05:59 GMT",
+  "Content-Type": "application/json",
+  "Transfer-Encoding": "chunked",
+  "Connection": "close",
+  "Server-Timing": "cfEdge;dur=6,cfOrigin;dur=0,cfWorker;dur=6",
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Expose-Headers": "X-Generation-Id,X-Provider-Name,request-id,cf-ray",
+  "set-cookie": "[redacted]",
+  "Permissions-Policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
+  "Referrer-Policy": "no-referrer, strict-origin-when-cross-origin",
+  "X-Content-Type-Options": "nosniff",
+  "Server": "cloudflare",
+  "CF-RAY": "[redacted]"
+ },
+ "body": "{\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"No cookie auth credentials found\",\"error_type\":\"authentication\"},\"request_id\":null}",
+ "seconds": 0.182
+}

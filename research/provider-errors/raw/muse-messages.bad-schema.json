@@ -1,0 +1,19 @@
+{
+ "case": "muse-messages.bad-schema",
+ "url": "https://api.meta.ai/v1/messages",
+ "stream": false,
+ "request_bytes": 273,
+ "status": 400,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-request-id": "[redacted]",
+  "Access-Control-Allow-Origin": "*",
+  "Date": "Sat, 26 Sep 2026 07:05:16 GMT",
+  "x-route": "model-api-rust",
+  "Proxy-Status": "[redacted]",
+  "Connection": "close",
+  "Content-Length": "169"
+ },
+ "body": "{\"error\":{\"message\":\"Invalid JSON schema: \\\"banana\\\" is not valid under any of the schemas listed in the 'anyOf' keyword\",\"type\":\"invalid_request_error\"},\"type\":\"error\"}",
+ "seconds": 0.197
+}

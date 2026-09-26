@@ -1,0 +1,25 @@
+{
+ "case": "or-responses-luna.unknown-model",
+ "url": "https://openrouter.ai/api/v1/responses",
+ "stream": false,
+ "request_bytes": 78,
+ "status": 400,
+ "headers": {
+  "Date": "Sat, 26 Sep 2026 07:05:51 GMT",
+  "Content-Type": "application/json",
+  "Transfer-Encoding": "chunked",
+  "Connection": "close",
+  "Server-Timing": "cfEdge;dur=3,cfOrigin;dur=0,cfWorker;dur=9",
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Expose-Headers": "X-Generation-Id,X-Provider-Name,request-id,cf-ray",
+  "X-Generation-Id": "[redacted]",
+  "set-cookie": "[redacted]",
+  "Permissions-Policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
+  "Referrer-Policy": "no-referrer, strict-origin-when-cross-origin",
+  "X-Content-Type-Options": "nosniff",
+  "Server": "cloudflare",
+  "CF-RAY": "[redacted]"
+ },
+ "body": "{\"error\":{\"message\":\"openai/no-such-model is not a valid model ID\",\"code\":400},\"user_id\":\"[redacted]\"}",
+ "seconds": 0.151
+}

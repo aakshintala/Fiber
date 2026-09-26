@@ -1,0 +1,146 @@
+{
+ "case": "or-responses-luna.overflow-dense-stream",
+ "url": "https://openrouter.ai/api/v1/responses",
+ "stream": [
+  [
+   9.476,
+   ": "
+  ],
+  [
+   9.476,
+   ""
+  ],
+  [
+   9.9,
+   ": "
+  ],
+  [
+   9.9,
+   ""
+  ],
+  [
+   10.32,
+   ": "
+  ],
+  [
+   10.32,
+   ""
+  ],
+  [
+   10.739,
+   ": "
+  ],
+  [
+   10.739,
+   ""
+  ],
+  [
+   11.488,
+   ": "
+  ],
+  [
+   11.488,
+   ""
+  ],
+  [
+   11.575,
+   ": "
+  ],
+  [
+   11.575,
+   ""
+  ],
+  [
+   12.027,
+   ": "
+  ],
+  [
+   12.027,
+   ""
+  ],
+  [
+   12.414,
+   ": "
+  ],
+  [
+   12.415,
+   ""
+  ],
+  [
+   12.835,
+   ": "
+  ],
+  [
+   12.835,
+   ""
+  ],
+  [
+   13.253,
+   ": "
+  ],
+  [
+   13.253,
+   ""
+  ],
+  [
+   13.696,
+   ": "
+  ],
+  [
+   13.696,
+   ""
+  ],
+  [
+   14.049,
+   "data: {\"type\":\"response.created\",\"response\":{\"id\":\"gen-1790406494-zHu6PVhLhv3i8LTY905X\",\"object\":\"response\",\"created_at\":1790406494,\"model\":\"openai/gpt-6-luna\",\"status\":\"in_progress\",\"completed_at\":null,\"output\":[],\"error\":null,\"incomplete_details\":null,\"tools\":[],\"tool_choice\":\"auto\",\"parallel_tool_calls\":true,\"max_output_tokens\":16,\"temperature\":1,\"top_p\":1,\"presence_penalty\":0,\"frequency_penalty\":0,\"top_logprobs\":0,\"max_tool_calls\":null,\"metadata\":{},\"background\":false,\"previous_response_id\":null,\"service_tier\":\"auto\",\"truncation\":\"disabled\",\"store\":false,\"instructions\":null,\"text\":{\"format\":{\"type\":\"text\"}},\"reasoning\":null,\"safety_identifier\":null,\"prompt_cache_key\":null,\"prompt_cache_options\":null,\"usage\":null},\"sequence_number\":0}"
+  ],
+  [
+   14.049,
+   ""
+  ],
+  [
+   14.049,
+   "data: {\"type\":\"response.in_progress\",\"response\":{\"id\":\"gen-1790406494-zHu6PVhLhv3i8LTY905X\",\"object\":\"response\",\"created_at\":1790406494,\"model\":\"openai/gpt-6-luna\",\"status\":\"in_progress\",\"completed_at\":null,\"output\":[],\"error\":null,\"incomplete_details\":null,\"tools\":[],\"tool_choice\":\"auto\",\"parallel_tool_calls\":true,\"max_output_tokens\":16,\"temperature\":1,\"top_p\":1,\"presence_penalty\":0,\"frequency_penalty\":0,\"top_logprobs\":0,\"max_tool_calls\":null,\"metadata\":{},\"background\":false,\"previous_response_id\":null,\"service_tier\":\"auto\",\"truncation\":\"disabled\",\"store\":false,\"instructions\":null,\"text\":{\"format\":{\"type\":\"text\"}},\"reasoning\":null,\"safety_identifier\":null,\"prompt_cache_key\":null,\"prompt_cache_options\":null,\"usage\":null},\"sequence_number\":1}"
+  ],
+  [
+   14.049,
+   ""
+  ],
+  [
+   14.049,
+   "data: {\"type\":\"response.failed\",\"response\":{\"id\":\"gen-1790406494-zHu6PVhLhv3i8LTY905X\",\"object\":\"response\",\"created_at\":1790406494,\"model\":\"openai/gpt-6-luna\",\"status\":\"failed\",\"completed_at\":1790406507,\"output\":[],\"error\":{\"code\":\"invalid_prompt\",\"message\":\"Your input exceeds the context window of this model. Please adjust your input and try again.\"},\"incomplete_details\":null,\"tools\":[],\"tool_choice\":\"auto\",\"parallel_tool_calls\":true,\"max_output_tokens\":16,\"temperature\":1,\"top_p\":1,\"presence_penalty\":0,\"frequency_penalty\":0,\"top_logprobs\":0,\"max_tool_calls\":null,\"metadata\":{},\"background\":false,\"previous_response_id\":null,\"service_tier\":\"auto\",\"truncation\":\"disabled\",\"store\":false,\"instructions\":null,\"text\":{\"format\":{\"type\":\"text\"}},\"reasoning\":null,\"safety_identifier\":null,\"prompt_cache_key\":null,\"prompt_cache_options\":null,\"usage\":null,\"error_type\":\"invalid_request\"},\"sequence_number\":2}"
+  ],
+  [
+   14.049,
+   ""
+  ],
+  [
+   14.049,
+   "data: [DONE]"
+  ],
+  [
+   14.049,
+   ""
+  ]
+ ],
+ "request_bytes": 4000084,
+ "status": 200,
+ "headers": {
+  "Date": "Sat, 26 Sep 2026 07:08:22 GMT",
+  "Content-Type": "text/event-stream",
+  "Transfer-Encoding": "chunked",
+  "Connection": "close",
+  "Server-Timing": "cfEdge;dur=1010,cfOrigin;dur=0,cfWorker;dur=7929",
+  "Access-Control-Allow-Origin": "*",
+  "Cache-Control": "no-cache",
+  "X-Generation-Id": "[redacted]",
+  "access-control-expose-headers": "X-Generation-Id,X-Provider-Name,request-id,cf-ray",
+  "set-cookie": "[redacted]",
+  "Permissions-Policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
+  "Referrer-Policy": "no-referrer, strict-origin-when-cross-origin",
+  "X-Content-Type-Options": "nosniff",
+  "Server": "cloudflare",
+  "CF-RAY": "[redacted]"
+ },
+ "seconds": 14.05
+}

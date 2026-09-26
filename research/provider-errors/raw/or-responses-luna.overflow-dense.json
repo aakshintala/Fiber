@@ -1,0 +1,25 @@
+{
+ "case": "or-responses-luna.overflow-dense",
+ "url": "https://openrouter.ai/api/v1/responses",
+ "stream": false,
+ "request_bytes": 4000068,
+ "status": 200,
+ "headers": {
+  "Date": "Sat, 26 Sep 2026 07:08:10 GMT",
+  "Content-Type": "application/json",
+  "Transfer-Encoding": "chunked",
+  "Connection": "close",
+  "Server-Timing": "cfEdge;dur=1059,cfOrigin;dur=0,cfWorker;dur=5252",
+  "Access-Control-Allow-Origin": "*",
+  "X-Generation-Id": "[redacted]",
+  "access-control-expose-headers": "X-Generation-Id,X-Provider-Name,request-id,cf-ray",
+  "set-cookie": "[redacted]",
+  "Permissions-Policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
+  "Referrer-Policy": "no-referrer, strict-origin-when-cross-origin",
+  "X-Content-Type-Options": "nosniff",
+  "Server": "cloudflare",
+  "CF-RAY": "[redacted]"
+ },
+ "body": "\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n{\"id\":\"gen-1790406484-GBrpKqs9T57m2vqFyLAs\",\"object\":\"response\",\"created_at\":1790406484,\"model\":\"openai/gpt-6-luna\",\"status\":\"failed\",\"completed_at\":1790406493,\"output\":[],\"error\":{\"code\":\"invalid_prompt\",\"message\":\"Your input exceeds the context window of this model. Please adjust your input and try again.\"},\"incomplete_details\":null,\"tools\":[],\"tool_choice\":\"auto\",\"parallel_tool_calls\":true,\"max_output_tokens\":16,\"temperature\":1,\"top_p\":1,\"presence_penalty\":0,\"frequency_penalty\":0,\"top_logprobs\":0,\"max_tool_calls\":null,\"metadata\":{},\"background\":false,\"previous_response_id\":null,\"service_tier\":\"auto\",\"truncation\":\"disabled\",\"store\":false,\"instructions\":null,\"text\":{\"format\":{\"type\":\"text\"}},\"reasoning\":null,\"safety_identifier\":null,\"prompt_cache_key\":null,\"prompt_cache_options\":null,\"usage\":null,\"error_type\":\"invalid_request\"}",
+ "seconds": 9.66
+}
