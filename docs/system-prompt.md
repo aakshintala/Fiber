@@ -12,8 +12,9 @@ handoff. The cache rules this page follows are `docs/prompt-cache.md`.
 
 What varies by project or by day is kept out of the system prompt:
 
-- The **system prompt** holds Fiber's instructions, the model's name and
-  addendum, extension texts and the person's own additions. It is part of the
+- The **system prompt** holds Fiber's instructions, the tools' guidelines,
+  the model's name and addendum, extension texts and the person's own
+  additions. It is part of the
   preamble, so it is built only at start, resume, `reload` and a model switch.
 - The **opening message** holds the environment, the project's instruction
   files and the skills listing. It is the first message of the conversation,
@@ -36,10 +37,11 @@ Built from these parts, in this order, joined by a blank line:
 
 1. Fiber's text, `crates/loop/prompt/system.md`, or the person's `SYSTEM.md`
    in its place.
-2. The model line, naming the model, and the model's addendum from provider
-   data, if it has one.
-3. Each extension's prompt text, in extension-name order.
-4. The person's `APPEND_SYSTEM.md`.
+2. The guidelines of every tool declared in full, in tool-name order.
+3. The session section: the model line, the unattended line when nobody can
+   answer, and the model's addendum from provider data, if it has one.
+4. Each extension's prompt text, in extension-name order.
+5. The person's `APPEND_SYSTEM.md`.
 
 The same inputs give the same bytes. Every part is read at a preamble build and
 at no other time.
@@ -50,7 +52,7 @@ A person replaces or extends the system prompt with files in Fiber home:
 
 | File | Effect |
 |---|---|
-| `SYSTEM.md` | Replaces Fiber's text. The model line, the addendum and extension texts still follow. |
+| `SYSTEM.md` | Replaces Fiber's text. Tool guidelines, the session section and extension texts still follow. |
 | `APPEND_SYSTEM.md` | Appended at the end. |
 
 Each can sit at the top of Fiber home or under `projects/<key>/`
@@ -62,6 +64,42 @@ An edit to one of these files takes effect at the next preamble build: a
 resume, a `reload` or a model switch. It is never appended mid-session. The
 cache miss that follows is one the person started, and the rebuild is logged
 (`preamble_built`).
+
+### Fiber's text
+
+Fiber's text says who the model is, how instruction files bind it, and how its
+context restarts at a handoff. The model is an expert software engineer working
+inside Fiber; it is not Fiber. The opening line is adapted from pi's (MIT
+license).
+
+Preferences about how to work, such as testing, commit habits and reply style,
+are left to instruction files. Fiber's text states only what holds in every
+project.
+
+### Tool guidelines
+
+A tool may declare guideline lines alongside its description
+(`docs/tools.md`, "What a tool declares"). The system prompt carries them for
+every tool declared in full, under a heading naming the tool, so guidance that
+spans calls sits in one place: for example, to read files with `read` rather
+than the shell, and to put every change to a file in one `edit`. A deferred
+tool's guidelines are left out, because the model has not seen the tool.
+
+The guidelines travel with the tool, not with the system prompt: `loop` never
+names a tool (`docs/architecture.md`), and an extension that replaces a
+built-in by name brings its own guidelines. The built-in tools' guidelines are
+`crates/tools/prompt/guidelines.md`, one `##` section per tool. pi builds its
+rules from per-tool guidelines the same way.
+
+The tool set is fixed per build, so the guidelines are too.
+
+### Unattended sessions
+
+In a session started by `fiber ask`, nobody can answer a question. There the
+session section adds a line telling the model to work through to the end on its
+own judgment and to state its assumptions in its final reply. A session a
+person or a driver can answer carries no such line. When a `fiber ask` session
+is later resumed in the terminal, the preamble is rebuilt without it.
 
 ### The model's addendum
 
@@ -226,9 +264,10 @@ compiled into the binary:
 
 | File | Holds |
 |---|---|
-| `crates/loop/prompt/system.md` | Fiber's system prompt text and the model line |
+| `crates/loop/prompt/system.md` | Fiber's system prompt text |
+| `crates/tools/prompt/guidelines.md` | the built-in tools' guidelines, one `##` section per tool |
 | `crates/loop/prompt/opening.md` | the opening message |
-| `crates/loop/prompt/messages.md` | everything else, one `##` section each: instruction file headers, the diff, deleted and date lines, the extension heading, the nudge, and the handoff note request |
+| `crates/loop/prompt/messages.md` | everything else, one `##` section each: the tools heading, the session section and unattended line, instruction file headers, the diff, deleted and date lines, the extension heading, the nudge, and the handoff note request |
 
 In `messages.md`, a section's text runs from its `## name` line to the next
 line starting `## `, with blank lines at either end removed. Placeholders are
@@ -242,8 +281,8 @@ person's `/handoff` instructions follow it. The nudge says how full the context
 is, that a handoff keeps the work going, and the log's path. Its numbers come
 from `context_nudged`.
 
-The prompt is written for Fiber. No prompt text is copied from pi, codex,
-Claude Code, maki or the Zig tree.
+The opening line is adapted from pi's. The rest is written for Fiber, and no
+other text is copied from pi, codex, Claude Code, maki or the Zig tree.
 
 ## Recording
 

@@ -1,3 +1,25 @@
+## tools
+
+# Tools
+
+{guidelines}
+
+## tool
+
+### {name}
+
+{guidelines}
+
+## session
+
+# Session
+
+You are running as {model}.
+
+## unattended
+
+Nobody is present to answer questions in this session. Work through to the end on your own judgment, and state every assumption you made in your final reply.
+
 ## instruction-file
 
 ### {path}
