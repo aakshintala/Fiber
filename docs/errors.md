@@ -162,6 +162,7 @@ Every code Fiber emits. "Where" names the lines that carry it.
 
 | Code | Where | Meaning |
 |---|---|---|
+| `ambiguous_match` | tool call | an edit block's text occurs more than once (`docs/tools.md`, "File tools") |
 | `authentication_failed` | model call, turn | the provider rejected the credential |
 | `blocked` | turn | the block budget ran out with no human to answer |
 | `config_invalid` | exit | a configuration file is invalid |
@@ -184,11 +185,14 @@ Every code Fiber emits. "Where" names the lines that carry it.
 | `mcp_server_unavailable` | tool call | the server failed to start or died |
 | `mcp_tool_removed` | tool call | the server has removed the tool |
 | `model_not_found` | model call, turn | the provider does not know the model |
+| `no_match` | tool call | an edit block's text was not found in the file |
 | `no_model` | exit | nothing chose a model |
 | `nonzero_exit` | tool call, job | a process exited nonzero |
+| `not_found` | tool call | the path `read` or `edit` names does not exist |
 | `orphaned` | job | the process that ran the job died |
 | `output_cap` | job | a job's output file passed 5 GB |
 | `output_truncated` | tool call, turn | a reply was cut off by the output-token limit, so its calls did not run |
+| `path_changed` | tool call | a symbolic link changed between the permission decision and the write |
 | `provider_unavailable` | model call, turn | a provider server error or overload |
 | `quota_exceeded` | model call, turn | a quota, billing or subscription limit |
 | `rate_limited` | model call, turn | the provider rate-limited the request |
@@ -196,11 +200,13 @@ Every code Fiber emits. "Where" names the lines that carry it.
 | `session_held` | exit | another process holds the session |
 | `session_not_found` | exit | a resume names no session |
 | `signal` | tool call, job | a process killed by a signal Fiber did not send |
+| `stale_file` | tool call | a write would replace a file the session has not seen in its current state |
 | `state_too_large` | extension call | a state value over 64 KiB |
 | `stream_incomplete` | model call, turn | the stream ended early or carried an unmatched error |
 | `timeout` | tool call, job | a deadline passed |
 | `tool_error` | tool call | the tool itself failed, or its effects function errored |
 | `unknown_tool` | tool call | the model named a tool that does not exist |
+| `unsupported_file` | tool call | a file tool was given a directory, device or file it cannot handle |
 | `usage` | exit | Fiber was called wrongly; exits 2 |
 
 Notices, for a failure outside any action:
