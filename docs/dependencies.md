@@ -10,7 +10,7 @@ The crates are `docs/architecture.md`. Threads rather than an async runtime is
 [ADR 0004](adr/0004-blocking-threads-no-async-runtime.md). Which CI jobs run
 where is [CI](https://github.com/aakshintala/fiber/issues/62). What Fiber
 promises about memory is
-[Performance budgets](https://github.com/aakshintala/fiber/issues/67).
+`docs/performance.md`.
 
 ## Admitting a crate
 
@@ -76,7 +76,7 @@ the cost of all of them holding memory at once.
 A new crate gets a workload in the probe and a row here, measured on Linux
 x86_64, Linux arm64 and macOS arm64. A crate is measured again when its major
 version or its enabled features change. What a running session holds, broken down by Fiber's own
-crates, belongs to the memory budget.
+crates, belongs to the memory budget (`docs/performance.md`).
 
 Dev-dependencies are compiled only into tests. They never reach the shipped
 binary, so they have no memory row.
@@ -185,7 +185,7 @@ call declare `executes`, as `docs/tools.md` requires. codex parses shell with
 tree-sitter-bash; a recogniser that fails closed does not need a full parser.
 
 Fiber uses the system allocator. Whether another allocator lowers resident
-memory is for the memory budget to measure.
+memory is for the memory budget (`docs/performance.md`) to measure.
 
 ## Tests and development tools
 

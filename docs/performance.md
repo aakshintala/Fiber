@@ -1,0 +1,106 @@
+# Performance
+
+The budgets Fiber holds, how each is measured, and what happens when one is
+exceeded. This is what is true now, not a plan. It is settled by
+[Performance budgets: what Fiber holds, and how it is measured](https://github.com/aakshintala/fiber/issues/67);
+that ticket's resolution holds the rationale and the rejected alternatives.
+
+Which CI job runs the gate, and on which runner, is
+[CI](https://github.com/aakshintala/fiber/issues/62). How memory is measured
+is `docs/dependencies.md`, "Measuring memory".
+
+## What a budget covers
+
+A budget covers one process: a session (`fiber serve`) or the terminal. MCP
+servers, process extensions, shell commands and delegates are processes of
+their own and are not counted. A delegate is a `fiber serve` and holds the
+same budgets as any session.
+
+Every workload runs a fresh install's default load: the first-party provider
+extension the session uses and the compiled-in tools. It runs no MCP server,
+no process extension and no other child process. An extension a person adds
+costs what it costs (about 150 KiB and one thread for a Lua extension,
+`research/extension-runtime/pass2/RESULTS.md`); that cost is its author's.
+
+Memory follows the context window, not the transcript. After a handoff the
+session holds the handoff note and what came after it, and a resumed session
+reads from its last handoff (`docs/handoff.md`). A 2-million-token session and
+a 20-thousand-token one fit the same ceiling.
+
+## Budgets
+
+| Budget | Ceiling | Gated on | Basis |
+|---|---|---|---|
+| Session, idle, headless | 12 MiB peak RSS | Linux x86_64 | from components |
+| Terminal, idle | 8 MiB peak RSS | Linux x86_64 | from components |
+| Session, busy or resumed | 24 MiB peak RSS | Linux x86_64 | from components |
+| Idle CPU, session and terminal | zero context switches in 60 s, on every thread | Linux x86_64 | exact |
+| Threads, idle headless session | 3, plus one per Lua extension in use | Linux x86_64 | exact |
+| fsyncs | 2 per model request, 2 per tool call | Linux x86_64 | exact |
+| Log bytes, 429-call turn | the turn's content plus 1 KiB per tool call | Linux x86_64 | exact |
+| `fiber serve` to its first line | 20 ms | Linux x86_64 | picked |
+| Terminal to its first frame | 50 ms | Linux x86_64 | picked |
+| Listing 1,000 sessions in one project, warm cache | 50 ms | Linux x86_64 | picked |
+
+Basis says where a number came from:
+
+- **From components** is the sum of measured parts, times two. Idle session:
+  every runtime crate linked together costs 5.1 MiB over an empty program
+  (`docs/dependencies.md`). Idle terminal: ratatui's two screen buffers and
+  crossterm, with room for the visible part of the transcript. Busy session: a
+  300,000-token context is about 1.2 MB of text, and a 2 MiB conversation
+  added about 3 MiB in `research/delegate-memory/`.
+- **Exact** follows from a rule, so the gate checks an equality, not a
+  ceiling. The three threads are the loop, signals and client zero
+  (`docs/architecture.md`, "The threads"). Two fsyncs bracket each effect, and
+  no line restates an earlier line in the same turn (`docs/events.md`,
+  "Writing").
+- **Picked** was chosen with no measurement behind it.
+- **Measured** is a Fiber measurement times two. The first build that runs
+  replaces every "from components" and "picked" number with its measured one.
+
+The busy-or-resumed ceiling holds on three workloads:
+
+- a turn of 429 tool calls with the context window full to the handoff point
+- resuming a 20,000-token session
+- resuming a 2,000,000-token session that has handed off 7 times
+
+429 tool calls is the p99 of tool calls per user turn, measured on real
+sessions in the archived Zig tree. That tree's session peaked at 2.1 GiB on
+this turn.
+
+1,000 sessions is twice the largest project in the owner's pi sessions (489).
+Listing reads each log's first line; `docs/state.md` rules out a derived
+database, and the ruling stands while this budget holds.
+
+## Measuring
+
+Each number is the median of 5 runs. Memory is peak RSS on Linux and peak
+footprint on macOS, by the method in `docs/dependencies.md`. Idle CPU is the
+voluntary and involuntary context switch counts in
+`/proc/<pid>/task/*/status`, read before and after 60 idle seconds. fsyncs are
+counted at the call site and log bytes are the size of `events.jsonl`, so both
+are exact on any platform.
+
+Linux x86_64 gates every pull request. Linux arm64 and macOS arm64 are
+measured at each release and reported, never gated: timings differ by about
+20 times between macOS and Linux on I/O, and macOS memory counts system
+frameworks Fiber does not control. Listing with a cold cache is reported,
+never gated.
+
+No test asserts a timing (`docs/testing.md`). The budgets are a benchmark job,
+separate from the tests.
+
+## When a budget is exceeded
+
+The pull request fails. Its author may raise the ceiling in the same pull
+request by editing the table above with the new measurement and the reason.
+
+A timing gate fails only when the median is over its ceiling and more than
+10% over the base commit's median, measured in the same job on the same
+runner. A benchmark's own self-check failing is a failed run, not a slow
+sample.
+
+At each release, every ceiling more than twice its measured value drops to
+measured times two. Ceilings never rise at release; only a pull request
+raises one.

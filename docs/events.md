@@ -522,5 +522,5 @@ byte for byte — is not even expressible from in there.
 
 The numbers quoted on this page were measured on the archived Zig
 implementation. They justify the rules; they are not Fiber's budgets. Fiber
-measures its own, on Linux, because the fsync cost that drove the write path is
+measures its own, on Linux (`docs/performance.md`), because the fsync cost that drove the write path is
 25–53% of turn wall time there and under 3% on macOS.
