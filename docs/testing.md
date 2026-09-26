@@ -9,7 +9,7 @@ Vocabulary is `CONTEXT.md`. The event stream is `docs/events.md`; the crates
 are `docs/architecture.md`. Which CI jobs run on which runners is
 [CI](https://github.com/aakshintala/fiber/issues/62). Latency, memory and
 storage budgets are
-[Performance budgets](https://github.com/aakshintala/fiber/issues/67). No
+`docs/performance.md`. No
 test asserts a performance timing or sleeps to get a correct result.
 
 ## Levels
