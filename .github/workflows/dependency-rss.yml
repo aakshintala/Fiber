@@ -1,0 +1,14 @@
+# Temporary: measures research/dependency-rss on Linux. Removed before merge.
+name: dependency-rss
+on: push
+jobs:
+  rss:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install 1.98.1 --profile minimal && rustup default 1.98.1
+      - run: sudo apt-get install -y time
+      - run: research/dependency-rss/run.sh | tee -a "$GITHUB_STEP_SUMMARY"

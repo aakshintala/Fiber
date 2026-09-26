@@ -21,10 +21,18 @@ fn main() {
     }
     #[cfg(feature = "ureq")]
     {
-        // One real HTTPS request through the OS trust store, as Fiber is configured.
+        // One real HTTPS request through the OS trust store, over the custom
+        // connector Fiber uses to keep the socket for cancellation
+        // (docs/architecture.md, "Cancellation").
+        let slot: stash::Slot = Default::default();
+        use ureq::unversioned::transport::Connector;
+        let connector = stash::StashConnector { slot: slot.clone() }
+            .chain(ureq::unversioned::transport::RustlsConnector::default());
         let tls = ureq::tls::TlsConfig::builder().root_certs(ureq::tls::RootCerts::PlatformVerifier).build();
-        let agent: ureq::Agent = ureq::Agent::config_builder().tls_config(tls).build().into();
+        let config = ureq::config::Config::builder().tls_config(tls).build();
+        let agent = ureq::Agent::with_parts(config, connector, ureq::unversioned::resolver::DefaultResolver::default());
         let body = agent.get("https://example.com").call().unwrap().into_body().read_to_string().unwrap();
+        assert!(slot.lock().unwrap().is_some(), "the connector kept the socket");
         black_box(body);
     }
     #[cfg(feature = "ratatui")]
@@ -172,6 +180,58 @@ fn main() {
         let mut h = HighlightLines::new(ss.find_syntax_by_extension("rs").unwrap(), &ts.themes["base16-ocean.dark"]);
         for l in text(100).lines() {
             black_box(h.highlight_line(l, &ss).unwrap());
+        }
+    }
+}
+
+/// The connector from research/concurrency/cancel_ureq_connector: it keeps a
+/// clone of the TcpStream so another thread could shut it down.
+#[cfg(feature = "ureq")]
+mod stash {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::sync::{Arc, Mutex};
+    use ureq::unversioned::transport::{Buffers, ConnectionDetails, Connector, LazyBuffers, NextTimeout, Transport};
+
+    pub type Slot = Arc<Mutex<Option<TcpStream>>>;
+
+    #[derive(Debug)]
+    pub struct StashConnector {
+        pub slot: Slot,
+    }
+
+    #[derive(Debug)]
+    pub struct StashTransport {
+        stream: TcpStream,
+        buffers: LazyBuffers,
+    }
+
+    impl Connector<()> for StashConnector {
+        type Out = StashTransport;
+        fn connect(&self, details: &ConnectionDetails, _: Option<()>) -> Result<Option<StashTransport>, ureq::Error> {
+            let addr = details.addrs.iter().copied().next().ok_or_else(|| std::io::Error::other("no address"))?;
+            let stream = TcpStream::connect(addr)?;
+            *self.slot.lock().unwrap() = Some(stream.try_clone()?);
+            let buffers = LazyBuffers::new(details.config.input_buffer_size(), details.config.output_buffer_size());
+            Ok(Some(StashTransport { stream, buffers }))
+        }
+    }
+
+    impl Transport for StashTransport {
+        fn buffers(&mut self) -> &mut dyn Buffers {
+            &mut self.buffers
+        }
+        fn transmit_output(&mut self, amount: usize, _: NextTimeout) -> Result<(), ureq::Error> {
+            self.stream.write_all(&self.buffers.output()[..amount])?;
+            Ok(())
+        }
+        fn await_input(&mut self, _: NextTimeout) -> Result<bool, ureq::Error> {
+            let n = self.stream.read(self.buffers.input_append_buf())?;
+            self.buffers.input_appended(n);
+            Ok(n > 0)
+        }
+        fn is_open(&mut self) -> bool {
+            true
         }
     }
 }
