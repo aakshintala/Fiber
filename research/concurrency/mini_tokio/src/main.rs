@@ -1,5 +1,5 @@
 //! Mini harness: multi-thread tokio runtime, same shape as `mini_blocking`.
-//! Numbers from this binary are macOS arm64 only; do not treat them as Linux.
+//! Timings are per platform; label the host when quoting them.
 
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

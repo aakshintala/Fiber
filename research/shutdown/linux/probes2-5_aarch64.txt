@@ -1,0 +1,75 @@
+### probe2
+=== uname -a ===
+Linux runnervmoyp6c 6.17.0-1022-azure #22-Ubuntu SMP Mon Jul 27 17:12:01 UTC 2026 aarch64 aarch64 aarch64 GNU/Linux
+
+recorded tuple: pgid=9896, leader pid=9896, lstart='Sat Sep 26 06:30:02 2026'
+
+-- check while group is alive --
+pgid_alive: True
+lstart now: Sat Sep 26 06:30:02 2026
+matches recorded: True
+
+leader process has now exited (waitpid reaped it)
+-- check immediately after leader exit, child (sleep 5) still running --
+pgid_alive: True
+lstart on dead leader pid: ''
+ps -g <pgid> while a non-leader member still runs:
+PID    PGID COMMAND
+   9897    9896 sleep 5
+
+-- check after the whole group has exited --
+pgid_alive: False
+
+=== pid/pgid reuse argument ===
+macOS ps lstart resolution is 1 second (see raw output above: no sub-second field). The kernel assigns pids/pgids from a rolling counter (PID_MAX ~ 99998 on this system by default), so a pgid number can be reused within a session once the value wraps and the old number is free again. A recorded (pgid, lstart) tuple disambiguates reuse ONLY if the reuse gap exceeds 1 second of wall clock AND no unrelated process happens to start in the exact same second after wraparound -- for a long-running Fiber session doing many kills per minute, that is not a safety margin, it is a birthday-paradox coin flip. The tuple is a heuristic, not a proof.
+### probe3 (Linux)
+Linux runnervmoyp6c 6.17.0-1022-azure #22-Ubuntu SMP Mon Jul 27 17:12:01 UTC 2026 aarch64
+crash: fiber alive=False child alive=False grandchild alive=True
+thread: fiber alive=True child alive=False grandchild alive=True
+### probe4
+orphan has been appending for 0.5s; file so far:
+orphan-1
+orphan-2
+orphan-3
+
+new process appended while the orphan still holds the file open.
+new process exit code: 0
+
+file contents while orphan is still alive and appending:
+orphan-1
+orphan-2
+orphan-3
+newcomer-hello
+
+file contents after the orphan finally exits on its own:
+orphan-1
+orphan-2
+orphan-3
+newcomer-hello
+orphan-4
+orphan-5
+orphan-6
+orphan-7
+orphan-8
+
+
+lines interleaved without corruption: True
+### probe5
+=== uname -a (platform for every number below: macOS / Darwin) ===
+Linux runnervmoyp6c 6.17.0-1022-azure #22-Ubuntu SMP Mon Jul 27 17:12:01 UTC 2026 aarch64 aarch64 aarch64 GNU/Linux
+
+depth1_6leaves/prompt/sequential    wall time: 0.051s
+depth1_6leaves/prompt/parallel      wall time: 0.010s
+depth1_6leaves/stubborn/sequential  wall time: 4.845s
+depth1_6leaves/stubborn/parallel    wall time: 0.801s
+depth2_3x2/prompt/sequential        wall time: 0.061s
+depth2_3x2/prompt/parallel          wall time: 0.010s
+depth2_3x2/stubborn/sequential      wall time: 4.820s
+depth2_3x2/stubborn/parallel        wall time: 0.809s
+
+=== summary table ===
+shape            leaf behaviour   sequential     parallel
+depth1_6leaves   prompt            0.051        0.010
+depth1_6leaves   stubborn          4.845        0.801
+depth2_3x2       prompt            0.061        0.010
+depth2_3x2       stubborn          4.820        0.809

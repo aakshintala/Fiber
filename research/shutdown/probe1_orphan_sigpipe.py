@@ -37,7 +37,7 @@ def spawn_group(cmd, extra_env=None):
     if extra_env:
         env.update(extra_env)
     p = subprocess.Popen(
-        cmd, shell=True, env=env,
+        cmd, shell=True, executable="/bin/bash", env=env,  # exec -a is bash-only
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         start_new_session=True,  # setsid equivalent

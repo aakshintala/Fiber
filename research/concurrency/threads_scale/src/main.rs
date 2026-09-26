@@ -1,8 +1,8 @@
 //! N parked OS threads, each blocked on its own `mpsc::Receiver::recv()`.
 //!
 //! Idle CPU, wakeups and RSS versus parked-thread count, and whether a
-//! smaller thread stack changes RSS. Linux is unmeasured: every printed
-//! number is macOS arm64 only.
+//! smaller thread stack changes RSS. Timings are per platform; label the
+//! host when quoting them.
 
 use std::sync::mpsc;
 use std::time::Duration;

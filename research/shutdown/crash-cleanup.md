@@ -5,11 +5,13 @@ shutdown (SIGTERM to every process group, SIGKILL 800ms later, then up
 to 2 seconds reading output) never runs. What is left running, and can
 anything reach it afterwards?
 
-All measurements were taken on one machine: macOS (Darwin 25.6.0,
+The measurements quoted inline were taken on macOS (Darwin 25.6.0,
 `sw_vers` reports macOS 26.6.2, build 25G83), arm64. Every number names
-the script that produced it, under this directory. Linux was not
-measured (no Linux box available); Linux claims are cited from man
-pages and marked "documented, not measured".
+the script that produced it, under this directory. All five probes also
+ran on Linux x86_64 and arm64 (GitHub-hosted Ubuntu 24.04 runners,
+kernel 6.17, September 26, 2026,
+[#16](https://github.com/aakshintala/fiber/issues/16)). Each section says
+where Linux differs, and raw output is in `linux/`.
 
 The scripts model Fiber's own process shape: each command runs in its
 own session and process group (`setsid`), stdin is `/dev/null`, stdout
@@ -55,6 +57,11 @@ group. So:
   the crash: nothing tells it to stop.
 - A child with quiet stdout (`tail -f` on an unchanging file) is the
   same: no write, no SIGPIPE, keeps running.
+- On Linux, child C died too, and B and D survived. Child C is GNU
+  `tail`, which exits when its output pipe loses its reader even though
+  it never writes. BSD `tail` on macOS does not. The difference is in
+  the program, not the kernel: a quiet child that does not check its
+  output survives on both.
 - A child that writes to a file is completely unaffected by the crash,
   because it never depended on the pipe. This is the concerning case
   for Fiber's background jobs: they are immune to the SIGPIPE mechanism
@@ -127,7 +134,7 @@ Measured on macOS: there is no prctl man page at all (`man prctl` gives
 "No manual entry for prctl") and no `<sys/prctl.h>` header. The
 mechanism does not exist on Darwin or BSD.
 
-Documented for Linux (`man 2 prctl`, not measured here):
+Documented for Linux (`man 2 prctl`), and exercised on Linux below:
 
 - `PR_SET_PDEATHSIG` asks the kernel to send a chosen signal to the
   calling process when its parent later dies.
@@ -140,6 +147,17 @@ Documented for Linux (`man 2 prctl`, not measured here):
   inherit it. Each process in a tree that wants the behaviour has to
   call prctl again itself, after its own fork, before its own exec. It
   is also cleared across a set-user-ID or set-group-ID exec.
+
+Measured on Linux x86_64 and arm64 with `probe3_pdeathsig_linux.py`.
+A stand-in Fiber launches `sh -c 'sleep 301 & exec sleep 300'` with
+PR_SET_PDEATHSIG set to SIGTERM between fork and exec:
+
+- When Fiber is SIGKILLed, the direct child (`sleep 300`) dies and the
+  grandchild (`sleep 301`) survives. The setting does not pass to a
+  child's own children.
+- When Fiber launches from a worker thread that then exits, the direct
+  child dies at once while Fiber is still running. The signal follows
+  the launching thread, not the process.
 
 So even on Linux, PR_SET_PDEATHSIG only helps if Fiber's own launch
 wrapper calls it in every process it starts, right after fork and
@@ -229,6 +247,9 @@ dependency was not measured here; it hinges on whether Fiber's
 supervisor already knows every descendant's pgid up front, as
 simulated, or discovers them level by level.
 
+Linux x86_64 and arm64 match: 4.82s to 4.85s sequential against 0.80s
+to 0.81s parallel for stubborn leaves (`linux/probes2-5_*.txt`).
+
 The load-bearing finding: shutting down sibling groups in parallel
 rather than one after another turns "N times 800ms" into "about 800ms"
 whenever any of them ignore SIGTERM, and costs nothing extra when they
@@ -236,9 +257,8 @@ all exit promptly.
 
 ## What was not measured
 
-- Nothing here was measured on Linux. The PR_SET_PDEATHSIG behaviour,
-  its thread-death caveat, and its fork or exec clearing behaviour are
-  all cited from `man 2 prctl`, not exercised on a Linux kernel.
+- PR_SET_PDEATHSIG being cleared across a set-user-ID or set-group-ID
+  exec is cited from `man 2 prctl`, not exercised.
 - Whether tree depth itself, as opposed to sequential-versus-parallel
   fan-out, adds cost when a real delegate must relay a signal to its
   own children. Probe 5 assumes the root can signal every group

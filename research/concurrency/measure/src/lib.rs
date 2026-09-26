@@ -39,6 +39,9 @@ pub struct Snapshot {
     pub wall: Instant,
     pub ru_utime_us: u64,
     pub ru_stime_us: u64,
+    /// CPU when `take` finished; differs from `ru_*time_us` by the cost of taking the snapshot.
+    pub ru_utime_after_us: u64,
+    pub ru_stime_after_us: u64,
     pub ru_maxrss_bytes: u64,
     pub rss_bytes: u64,
     pub threads: i32,
@@ -81,10 +84,13 @@ impl Snapshot {
                 threads_running += 1;
             }
         }
+        let after = rusage_self();
         Snapshot {
             wall,
             ru_utime_us,
             ru_stime_us,
+            ru_utime_after_us: timeval_us(after.ru_utime),
+            ru_stime_after_us: timeval_us(after.ru_stime),
             // Linux documents ru_maxrss in KiB.
             ru_maxrss_bytes: ru.ru_maxrss as u64 * 1024,
             rss_bytes: status_field(&status, "VmRSS:") as u64 * 1024,
@@ -142,6 +148,8 @@ impl Snapshot {
             wall,
             ru_utime_us,
             ru_stime_us,
+            ru_utime_after_us: ru_utime_us,
+            ru_stime_after_us: ru_stime_us,
             ru_maxrss_bytes,
             rss_bytes: pti.pti_resident_size,
             threads: pti.pti_threadnum,
@@ -238,6 +246,7 @@ pub struct Report {
     pub timer_wakeups_bin_2: u64,
     pub csw: i32,
     pub unix_syscalls: i32,
+    pub snapshot_cpu_us: u64,
 }
 
 impl Report {
@@ -246,8 +255,8 @@ impl Report {
             label: label.to_string(),
             platform: platform_line(),
             window: end.wall.saturating_duration_since(start.wall),
-            cpu_user_us: end.ru_utime_us.saturating_sub(start.ru_utime_us),
-            cpu_sys_us: end.ru_stime_us.saturating_sub(start.ru_stime_us),
+            cpu_user_us: end.ru_utime_us.saturating_sub(start.ru_utime_after_us),
+            cpu_sys_us: end.ru_stime_us.saturating_sub(start.ru_stime_after_us),
             pti_user_ns: end.pti_user_ns.saturating_sub(start.pti_user_ns),
             pti_sys_ns: end.pti_system_ns.saturating_sub(start.pti_system_ns),
             threads_start: start.threads,
@@ -269,6 +278,8 @@ impl Report {
                 .saturating_sub(start.timer_wakeups_bin_2),
             csw: end.csw.saturating_sub(start.csw),
             unix_syscalls: end.unix_syscalls.saturating_sub(start.unix_syscalls),
+            snapshot_cpu_us: (end.ru_utime_after_us + end.ru_stime_after_us)
+                .saturating_sub(end.ru_utime_us + end.ru_stime_us),
         }
     }
 
@@ -340,6 +351,7 @@ impl Report {
         println!("csw: {}", self.csw);
         println!("csw_per_sec: {:.4}", self.csw_per_sec());
         println!("unix_syscalls_delta: {}", self.unix_syscalls);
+        println!("snapshot_cpu_us (excluded from the window): {}", self.snapshot_cpu_us);
     }
 }
 

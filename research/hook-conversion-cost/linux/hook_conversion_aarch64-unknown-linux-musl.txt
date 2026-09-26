@@ -1,0 +1,8 @@
+Linux 6.17.0-1022-azure aarch64
+target aarch64-unknown-linux-musl
+| value | JSON size | to Lua | hook | to Rust | total (median of 200, after 20 warmup) |
+|---|---|---|---|---|---|
+| tool result, 16 KiB content (default cap) | 16 KiB | 2 µs | 129 µs | 10 µs | 141 µs |
+| tool result, 1 MiB content (artifact-sized) | 1036 KiB | 317 µs | 7165 µs | 244 µs | 7733 µs |
+| model request, 200 messages | 66 KiB | 314 µs | 419 µs | 556 µs | 1296 µs |
+| model request, 1000 messages | 317 KiB | 1632 µs | 1938 µs | 2781 µs | 6400 µs |

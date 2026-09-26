@@ -1,0 +1,8 @@
+Linux 6.17.0-1022-azure x86_64
+target x86_64-unknown-linux-musl
+| value | JSON size | to Lua | hook | to Rust | total (median of 200, after 20 warmup) |
+|---|---|---|---|---|---|
+| tool result, 16 KiB content (default cap) | 16 KiB | 3 µs | 186 µs | 20 µs | 210 µs |
+| tool result, 1 MiB content (artifact-sized) | 1036 KiB | 627 µs | 9785 µs | 467 µs | 10892 µs |
+| model request, 200 messages | 66 KiB | 442 µs | 582 µs | 815 µs | 1858 µs |
+| model request, 1000 messages | 317 KiB | 2541 µs | 2604 µs | 3971 µs | 9165 µs |

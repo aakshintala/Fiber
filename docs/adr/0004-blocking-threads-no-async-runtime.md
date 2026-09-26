@@ -21,8 +21,10 @@ a parked `std::thread` (0.114 ms against 0.122 ms over 60 s,
 thread count needed measuring too.
 
 Three measurements decided what the argument could rest on. All were run on
-macOS arm64 (Darwin 25.6.0, Apple M3 Pro, rustc 1.98.1) and **none of them has
-been run on Linux**, which by premise 9 carries the usage weight.
+macOS arm64 (Darwin 25.6.0, Apple M3 Pro, rustc 1.98.1), then on Linux x86_64
+and arm64 as the static musl binaries Fiber ships
+([#16](https://github.com/aakshintala/fiber/issues/16), figures in
+`research/concurrency/README.md`). Linux confirmed all three.
 
 **Parked threads are cheap at any count Fiber will reach.**
 `research/concurrency/threads_scale`, 10-second idle windows: 1 thread 1.6 MiB
@@ -30,7 +32,9 @@ RSS, 32 threads 2.3 MiB, 128 threads 4.2 MiB, 512 threads 11.6 MiB and 0.35 ms
 of CPU, at 0.1 wakeups per second. A 64 KiB stack changed nothing, because RSS
 counts committed pages rather than reserved stack. "One parked thread per
 blocking thing" therefore survives every MCP server, background job and child
-session v0.0.1 could plausibly have. This removed thread count as an argument.
+session v0.0.1 could plausibly have. On Linux musl, 512 parked threads cost
+3.2 MiB and 0.16 to 0.18 ms, with zero context switches. This removed thread
+count as an argument.
 
 **The same program, written three ways, differs by almost nothing.**
 `research/concurrency/mini_blocking`, `mini_smol` and `mini_tokio` each stream
@@ -43,7 +47,8 @@ cancellation that interrupts the in-flight read. Medians of three runs:
 | smol | 862 KB | 2.33 MB | 502 ms | 42 µs | 34 | 137 |
 | tokio | 915 KB | 2.57 MB | 502 ms | 27 µs | 15 | 133 |
 
-400 KB is 2% of a 20 MiB budget, the cancel latencies are three orders of
+On Linux musl the gap to tokio is the same 400 KB and all three peak within
+0.3 MiB of each other. 400 KB is 2% of a 20 MiB budget, the cancel latencies are three orders of
 magnitude below human perception, and the wall times are identical because the
 work is I/O. The line counts came out within five lines of each other, so
 "easier to write" had no measured winner either. Two incidental findings: smol
@@ -55,9 +60,9 @@ escape-cancels-a-request "requires Fiber to own the `TcpStream`", because ureq
 exposes no way to interrupt a blocked read. `research/concurrency/cancel_ureq_connector`
 shows that ureq 3.4's custom-connector API gives Fiber the socket handle while
 ureq keeps doing HTTP, chunked decoding and TLS: a thread stuck in ureq's body
-reader returned 211 µs after another thread closed the socket, with the stream
-still arriving decoded. Plaintext only — the test server has no TLS, so the
-HTTPS path is inferred.
+reader returned after another thread closed the socket, with the stream
+still arriving decoded. Over TLS the median of 20 cancellations was 67 µs on
+macOS and 154 to 174 µs on Linux musl.
 
 So the numbers do not decide it. Three things that are not performance do.
 
@@ -101,7 +106,7 @@ blocking implementation is fiddlier than the async one, and that pattern
 recurs in background jobs, subagents and MCP. This is accepted, not
 overlooked.
 
-The argument that would reopen this is a Linux measurement contradicting the
-macOS ones, or a v0.0.1 requirement to hold enough concurrent sockets that
+The argument that would reopen this is a measurement on a shipped target
+contradicting these, or a v0.0.1 requirement to hold enough concurrent sockets that
 thread-per-socket stops being free. Neither is an argument from taste, and
 neither is available today.

@@ -1,0 +1,23 @@
+name: probe-16
+on: push
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update -q && sudo apt-get install -yq musl-tools time
+      - run: rustup update stable && rustup default stable && rustup target add $(uname -m)-unknown-linux-musl
+      - run: research/concurrency/linux-probe/probe.sh
+        env:
+          CC_aarch64_unknown_linux_musl: musl-gcc
+          CC_x86_64_unknown_linux_musl: musl-gcc
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: out-${{ matrix.os }}
+          path: out
