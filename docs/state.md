@@ -19,6 +19,7 @@ Default `~/.fiber` on macOS and Linux; `FIBER_HOME` relocates all of it.
   credentials/<provider>          one file per provider, mode 0600
   run/<session_id>                one local socket per running session
   cache/models/<provider>.json    discovered model list
+  crashes/<session_id>-<ms>.txt   one report per panic (docs/code-quality.md)
 ```
 
 ## Override
@@ -132,6 +133,12 @@ touching `credentials/` is refused in every mode
 `rm -rf ~/.fiber/cache` is a documented safe reset. Today it holds each
 provider's discovered model list, one file per provider at
 `cache/models/<provider>.json`, fetched and replaced whole.
+
+**Crash reports.** `crashes/<session_id>-<ms>.txt` holds one panic's
+message, thread name and backtrace, written by the panic hook before the
+process aborts (`docs/code-quality.md`, "Panics"). A report describes a bug
+in Fiber, not a session, so nothing reads one to decide anything, and
+deleting them is always safe. Nothing prunes them.
 
 **Worktrees.** Per project, `worktrees/<id>/`: the git worktree of a delegate
 started with `isolation: worktree`. When one is removed or kept is
