@@ -13,8 +13,9 @@ mean what it says there and nothing else.
 **The session log is the only state of record** for what happened in a
 session. Anything the loop, the TUI or an extension needs to know about a
 session after a resume is an event, or a fold of events. Configuration,
-credentials and an extension's data directories describe no single session
-and live in Fiber home (`docs/state.md`). Runtime
+credentials and an extension's data directories describe no single session.
+They live in Fiber home (`docs/state.md`), and a repository's configuration in
+its `.fiber/` directory (`docs/configuration.md`). Runtime
 objects may cache and index; none of them is ever a second authority. No file
 beside the log holds state.
 
@@ -349,8 +350,8 @@ Their position in the log is the delivery point.
 
 ## Resume
 
-A session is reconstructed from the log and the configuration in
-[Fiber home](state.md), nothing else.
+A session is reconstructed from the log and its
+[configuration](configuration.md), nothing else.
 
 Open memory-maps or scans the file into an offset table and folds the
 latest-wins facts as it goes. Only the window a consumer actually needs is

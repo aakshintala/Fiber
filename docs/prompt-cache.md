@@ -127,7 +127,7 @@ with it the cache.
 ## Cache lifetime
 
 The cache lifetime is 1 hour by default, in every session, delegates included.
-It is configurable per model and per session. It is part of the preamble, so it
+It is configurable per model and per session (`docs/configuration.md`). It is part of the preamble, so it
 changes only at a build.
 
 Anthropic stores 5-minute and 1-hour entries separately. Moving a session from

@@ -5,12 +5,15 @@ Default `~/.fiber` on macOS and Linux; `FIBER_HOME` relocates all of it.
 
 ```
 ~/.fiber/                         Fiber home
-  <config files>                  names and format: not settled here (Configuration)
-  <global standing rules>         one file at the top level
+  config.json                     global configuration (docs/configuration.md)
+  config/<extension>.json         an extension's global settings
+  rules                           global standing rules
   projects/<key>/                 one per project
     sessions/<id>/                events.jsonl, session.lock, artifacts/
     history.jsonl                 prompt history, append-only
     rules                         this project's standing rules
+    config.json                   this project's configuration
+    config/<extension>.json       an extension's settings for this project
     worktrees/<id>/               one git worktree per delegate that asked for one
     data/<extension>/             an extension's data for this project
   extensions/<name>/              installed extensions, one directory each
@@ -181,5 +184,3 @@ binary is fetched and replaced is not settled here.
 
 - Fiber's own debug and crash logs:
   [Observability: what Fiber records about itself outside a session](https://github.com/aakshintala/fiber/issues/60)
-- Config file names and format, and the project directory `.fiber/` inside a
-  repository (Configuration).

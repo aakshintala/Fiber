@@ -36,7 +36,8 @@ also carries a TUI extension ("Commands and screens").
 
 ## What a package holds
 
-An extension is one directory. Its manifest states:
+An extension is one directory. Its manifest, `extension.json`, states
+(`docs/configuration.md`, "An extension's manifest"):
 
 - its name, which is also where it is fetched from (see [Names](#names))
 - its version
@@ -46,7 +47,7 @@ An extension is one directory. Its manifest states:
   per platform
 - for a process extension, the program to run and its arguments, whether the
   session needs it (`required`), and how long it may take to finish when the
-  session ends (`exit_timeout`, no default)
+  session ends (`exit_timeout_ms`, no default)
 - an install step, if it has one, such as `npm ci`
 
 Beside the manifest it may hold:
@@ -194,13 +195,13 @@ used at session start.
 ### Host calls
 
 ```
-host.secret(name)                  -- the configured secret string for `name`
+host.secret(name)                  -- the secret stored at credentials/<name>
 host.http(opts)                    -- one HTTP request; returns { status, body }
 host.model(opts)                   -- one model request; returns { text, usage }
 host.exec(program, args, opts)     -- run a program; returns { exit_code, signal, stdout, stderr }
 host.delegate(spec, on_finished)   -- start a delegate job; returns its job_id
 host.fs.read / write / list / stat / mkdir / remove / rename
-host.config.get(key) / host.config.set(key, value)
+host.config.get(key) / host.config.set(key, value, scope)   -- scope: "machine" or "project"
 host.data_dir(scope)               -- "machine" or "project"
 host.after(ms, fn, opts) / host.every(ms, fn, opts)   -- timers; return a handle with :cancel()
 host.drive(command, args)          -- send a driver command
@@ -233,8 +234,10 @@ json.decode(str) / json.encode(value)   -- JSON, host-provided (Lua has none bui
   in a step").
 - **`host.config`** reads and writes the extension's own settings, taking
   Fiber home's lock before a read-change-write (`docs/state.md`, "Concurrent
-  access"). A picker that enables models writes its choice here. The file
-  format is Configuration's.
+  access"). A picker that enables models writes its choice here. `get`
+  returns the value merged across layers; `set` writes the machine or the
+  project file, as `scope` says. The files and layers are
+  `docs/configuration.md` ("Extension settings").
 - **`host.drive`** sends any driver command except an answer to an approval.
   An extension never approves a tool call, here or in a hook. An inbox
   extension uses `steer` or `prompt`; a `/goal` extension may use `cancel`.
@@ -303,8 +306,8 @@ state.keys()
 A provider extension is mostly data: its name, how its credential is found, and
 its models, each with a protocol, a base URL, flags and metadata. The wire
 protocols are native Rust, so a provider never parses a stream. What a provider
-declares, and why, is `docs/model-routing.md`. The file format for that data is
-settled with configuration.
+declares, and why, is `docs/model-routing.md`. The file is
+`providers/<name>.json` (`docs/configuration.md`, "A provider's data").
 
 The one piece of Lua a provider may have is a function that discovers its
 models. Here is one for a gateway that lists its models at `/models`:
@@ -572,7 +575,7 @@ On a normal exit, when a session is idle with no client or has been sent
 `close`, Fiber delivers every remaining event to each watcher and waits for
 each to finish, within its timeout. That is where a worklog or a memory
 written at session end runs. A process extension then has its manifest's
-`exit_timeout` to finish, and after that gets the shutdown sequence every
+`exit_timeout_ms` to finish, and after that gets the shutdown sequence every
 child gets: SIGTERM, 800 ms, then SIGKILL (`docs/invocation.md`, "Shutdown").
 
 When a signal stops Fiber, no extension code runs, as no hook does. The
@@ -679,7 +682,7 @@ one of these commands, so an idle Fiber does no work.
 A repository can bring extensions in two ways:
 
 - ship them in `.fiber/extensions/<name>/`
-- declare them by name and version in project config, to be fetched
+- declare them by name and version in `.fiber/config.json`, to be fetched
 
 Fiber loads neither until a person approves it. The first time a session would
 load one, the terminal shows:

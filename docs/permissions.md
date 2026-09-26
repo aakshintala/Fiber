@@ -227,8 +227,8 @@ Fiber home."
 
 ### Scope
 
-Standing rules come from two files in [Fiber home](state.md): a global one at
-the top level, and the project's `rules` file. The project's rules win where
+Standing rules come from two files in [Fiber home](state.md): `rules` at the
+top level, and the project's `rules` file. The project's rules win where
 both match.
 
 A project is identified by **git's shared directory**, so every worktree of a
