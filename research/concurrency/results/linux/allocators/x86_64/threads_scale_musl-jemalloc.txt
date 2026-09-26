@@ -1,0 +1,109 @@
+## musl-jemalloc threads_scale stripped=1017368
+--- N_THREADS=1 ---
+=== threads_scale N_THREADS=1 STACK_KIB=0 ===
+platform: Linux 6.17.0-1022-azure x86_64
+window_s: 10.000
+cpu_user_us: 0
+cpu_sys_us: 54
+cpu_total_us: 54
+cpu_total_ms: 0.054
+cpu_pct_of_one_core: 0.000540
+pti_cpu_ns: 309000 (user 0) (sys 309000)
+threads_start: 2
+threads_end: 2
+threads_running_end: 1
+rss_bytes: 11472896
+rss_kib: 11204.0
+maxrss_bytes: 11390976
+wakeups: n/a on Linux (use csw)
+interrupt_wakeups: 0
+platform_idle_wakeups: 0
+timer_wakeups_bin_1: 0
+timer_wakeups_bin_2: 0
+wakeup_sum: 0
+wakeups_per_sec: 0.0000
+csw: 1
+csw_per_sec: 0.1000
+unix_syscalls_delta: 0
+snapshot_cpu_us (excluded from the window): 215
+--- N_THREADS=32 ---
+=== threads_scale N_THREADS=32 STACK_KIB=0 ===
+platform: Linux 6.17.0-1022-azure x86_64
+window_s: 10.001
+cpu_user_us: 6
+cpu_sys_us: 37
+cpu_total_us: 43
+cpu_total_ms: 0.043
+cpu_pct_of_one_core: 0.000430
+pti_cpu_ns: 1328000 (user 915000) (sys 413000)
+threads_start: 33
+threads_end: 33
+threads_running_end: 1
+rss_bytes: 101793792
+rss_kib: 99408.0
+maxrss_bytes: 101597184
+wakeups: n/a on Linux (use csw)
+interrupt_wakeups: 0
+platform_idle_wakeups: 0
+timer_wakeups_bin_1: 0
+timer_wakeups_bin_2: 0
+wakeup_sum: 0
+wakeups_per_sec: 0.0000
+csw: 1
+csw_per_sec: 0.1000
+unix_syscalls_delta: 0
+snapshot_cpu_us (excluded from the window): 1226
+--- N_THREADS=128 ---
+=== threads_scale N_THREADS=128 STACK_KIB=0 ===
+platform: Linux 6.17.0-1022-azure x86_64
+window_s: 10.004
+cpu_user_us: 7
+cpu_sys_us: 49
+cpu_total_us: 56
+cpu_total_ms: 0.056
+cpu_pct_of_one_core: 0.000560
+pti_cpu_ns: 4196000 (user 1099000) (sys 3097000)
+threads_start: 129
+threads_end: 129
+threads_running_end: 1
+rss_bytes: 105881600
+rss_kib: 103400.0
+maxrss_bytes: 105558016
+wakeups: n/a on Linux (use csw)
+interrupt_wakeups: 0
+platform_idle_wakeups: 0
+timer_wakeups_bin_1: 0
+timer_wakeups_bin_2: 0
+wakeup_sum: 0
+wakeups_per_sec: 0.0000
+csw: 1
+csw_per_sec: 0.1000
+unix_syscalls_delta: 0
+snapshot_cpu_us (excluded from the window): 3586
+--- N_THREADS=512 ---
+=== threads_scale N_THREADS=512 STACK_KIB=0 ===
+platform: Linux 6.17.0-1022-azure x86_64
+window_s: 10.015
+cpu_user_us: 0
+cpu_sys_us: 151
+cpu_total_us: 151
+cpu_total_ms: 0.151
+cpu_pct_of_one_core: 0.001508
+pti_cpu_ns: 15188000 (user 877000) (sys 14311000)
+threads_start: 513
+threads_end: 513
+threads_running_end: 1
+rss_bytes: 125583360
+rss_kib: 122640.0
+maxrss_bytes: 125276160
+wakeups: n/a on Linux (use csw)
+interrupt_wakeups: 0
+platform_idle_wakeups: 0
+timer_wakeups_bin_1: 0
+timer_wakeups_bin_2: 0
+wakeup_sum: 0
+wakeups_per_sec: 0.0000
+csw: 1
+csw_per_sec: 0.0998
+unix_syscalls_delta: 0
+snapshot_cpu_us (excluded from the window): 13448

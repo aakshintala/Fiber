@@ -112,4 +112,34 @@ Closing the stashed socket unblocks the read over TLS on every platform. Each re
 
 musl is slower wherever a program allocates a lot of memory, and uses less RSS. The ureq cancel is 1.4 to 1.8 times slower on musl. The Lua hook conversion (`research/hook-conversion-cost/linux/`) is 11% to 48% slower on musl, depending on the row. musl uses less than half glibc's RSS for parked threads, and 0.4 to 1.3 MiB less peak RSS in the `mini_*` programs. No measured slowdown reaches a millisecond on a per-event path.
 
-Swapping the allocator for jemalloc or mimalloc on the musl target would remove most of the slowdown and probably cost RSS. ripgrep does this on its musl builds. It was not measured here.
+### Replacing musl's allocator
+
+Replacing musl's allocator with mimalloc or jemalloc removes the slowdown, but costs 30 to 40 times the RSS with parked threads. musl's own allocator uses the least memory of the four in every test. ripgrep uses jemalloc on its musl builds, but ripgrep does not hold hundreds of parked threads.
+
+`linux-probe/allocators.sh` built `threads_scale` and the Lua hook conversion benchmark four ways, as one CI run on September 26, 2026: musl with its own allocator, musl with mimalloc 0.1.52, musl with jemalloc (`tikv-jemallocator` 0.7.0), and glibc with its own allocator. Results are in `results/linux/allocators/`. jemalloc did not build for arm64 musl: its `configure` found no atomics through Ubuntu's `musl-gcc` wrapper.
+
+Parked threads, RSS in MiB at the end of a 10-second idle window, x86_64:
+
+| threads | musl | musl + mimalloc | musl + jemalloc | glibc |
+|---:|---:|---:|---:|---:|
+| 1 | 0.6 | 4.7 | 10.9 | 2.2 |
+| 32 | 0.7 | 10.8 | 97.1 | 2.6 |
+| 128 | 1.2 | 31.2 | 101.0 | 3.6 |
+| 512 | 3.2 | 116.8 | 119.8 | 7.5 |
+
+arm64 matches: musl 3.2 MiB, mimalloc 112.8 MiB and glibc 7.2 MiB at 512 threads. mimalloc adds about 225 KiB per thread. jemalloc jumps to 97 MiB by 32 threads, one arena per thread up to its arena limit. Every Rust thread allocates when it starts, so this is the least a thread costs under each allocator, not the most.
+
+Lua hook conversion, median of three runs:
+
+| | musl | musl + mimalloc | musl + jemalloc | glibc |
+|---|---:|---:|---:|---:|
+| x86_64: tool result, 16 KiB | 212 µs | 148 µs | 145 µs | 152 µs |
+| x86_64: model request, 1000 messages | 8799 µs | 5858 µs | 5924 µs | 6139 µs |
+| x86_64: peak RSS | 6.2 MiB | 29.3 MiB | 11.1 MiB | 9.1 MiB |
+| arm64: tool result, 16 KiB | 140 µs | 115 µs | | 116 µs |
+| arm64: model request, 1000 messages | 6443 µs | 4855 µs | | 5406 µs |
+| arm64: peak RSS | 6.0 MiB | 29.1 MiB | | 8.6 MiB |
+
+mimalloc and jemalloc run as fast as glibc, about 30% faster than musl's allocator. The time saved is under 3 ms on the largest request. mimalloc also adds about 150 KB to the stripped binary, and jemalloc about 470 KB.
+
+Both allocators ran with default settings. Tuning, such as fewer jemalloc arenas or no per-thread caches, was not tried.

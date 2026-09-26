@@ -1,0 +1,25 @@
+## musl-jemalloc hook-conversion-cost stripped=1693736
+--- run 1 ---
+| value | JSON size | to Lua | hook | to Rust | total (median of 200, after 20 warmup) |
+|---|---|---|---|---|---|
+| tool result, 16 KiB content (default cap) | 16 KiB | 2 µs | 137 µs | 5 µs | 144 µs |
+| tool result, 1 MiB content (artifact-sized) | 1036 KiB | 58 µs | 8634 µs | 91 µs | 8785 µs |
+| model request, 200 messages | 66 KiB | 243 µs | 495 µs | 446 µs | 1185 µs |
+| model request, 1000 messages | 317 KiB | 1352 µs | 2290 µs | 2254 µs | 5916 µs |
+maxrss_kib: 11396
+--- run 2 ---
+| value | JSON size | to Lua | hook | to Rust | total (median of 200, after 20 warmup) |
+|---|---|---|---|---|---|
+| tool result, 16 KiB content (default cap) | 16 KiB | 2 µs | 137 µs | 5 µs | 145 µs |
+| tool result, 1 MiB content (artifact-sized) | 1036 KiB | 67 µs | 8610 µs | 104 µs | 8775 µs |
+| model request, 200 messages | 66 KiB | 242 µs | 493 µs | 452 µs | 1189 µs |
+| model request, 1000 messages | 317 KiB | 1339 µs | 2291 µs | 2265 µs | 5924 µs |
+maxrss_kib: 11236
+--- run 3 ---
+| value | JSON size | to Lua | hook | to Rust | total (median of 200, after 20 warmup) |
+|---|---|---|---|---|---|
+| tool result, 16 KiB content (default cap) | 16 KiB | 3 µs | 137 µs | 5 µs | 145 µs |
+| tool result, 1 MiB content (artifact-sized) | 1036 KiB | 61 µs | 8633 µs | 93 µs | 8789 µs |
+| model request, 200 messages | 66 KiB | 239 µs | 492 µs | 467 µs | 1201 µs |
+| model request, 1000 messages | 317 KiB | 1250 µs | 2287 µs | 2331 µs | 5927 µs |
+maxrss_kib: 11608
