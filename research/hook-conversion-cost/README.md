@@ -57,5 +57,5 @@ to reach Lua on x86_64 musl against 57 µs on glibc. The hook column is 4% to 29
 slower. The conclusion holds: every row stays small next to a model turn.
 
 Replacing musl's allocator with mimalloc or jemalloc brings musl to glibc's speed,
-at 30 to 40 times the RSS with parked threads. See "Replacing musl's allocator" in
+at about 36 times the RSS with 512 parked threads. See "Replacing musl's allocator" in
 `research/concurrency/README.md`.

@@ -114,7 +114,7 @@ musl is slower wherever a program allocates a lot of memory, and uses less RSS. 
 
 ### Replacing musl's allocator
 
-Replacing musl's allocator with mimalloc or jemalloc removes the slowdown, but costs 30 to 40 times the RSS with parked threads. musl's own allocator uses the least memory of the four in every test. ripgrep uses jemalloc on its musl builds, but ripgrep does not hold hundreds of parked threads.
+Replacing musl's allocator with mimalloc or jemalloc removes the slowdown, but multiplies RSS with 512 parked threads by about 36, from 3.2 MiB to 113 to 120 MiB. musl's own allocator uses the least memory of the four in every test. ripgrep uses jemalloc on its musl builds, but ripgrep does not hold hundreds of parked threads.
 
 `linux-probe/allocators.sh` built `threads_scale` and the Lua hook conversion benchmark four ways, as one CI run on September 26, 2026: musl with its own allocator, musl with mimalloc 0.1.52, musl with jemalloc (`tikv-jemallocator` 0.7.0), and glibc with its own allocator. Results are in `results/linux/allocators/`. jemalloc did not build for arm64 musl: its `configure` found no atomics through Ubuntu's `musl-gcc` wrapper.
 
@@ -127,7 +127,7 @@ Parked threads, RSS in MiB at the end of a 10-second idle window, x86_64:
 | 128 | 1.2 | 31.2 | 101.0 | 3.6 |
 | 512 | 3.2 | 116.8 | 119.8 | 7.5 |
 
-arm64 matches: musl 3.2 MiB, mimalloc 112.8 MiB and glibc 7.2 MiB at 512 threads. mimalloc adds about 225 KiB per thread. jemalloc jumps to 97 MiB by 32 threads, one arena per thread up to its arena limit. Every Rust thread allocates when it starts, so this is the least a thread costs under each allocator, not the most.
+arm64 matches: musl 3.2 MiB, mimalloc 112.8 MiB and glibc 7.2 MiB at 512 threads. mimalloc adds about 225 KiB per thread. jemalloc jumps to 97 MiB by 32 threads, which fits it spreading threads across its default arenas (4 per CPU). Every Rust thread allocates when it starts, so this is the least a thread costs under each allocator, not the most.
 
 Lua hook conversion, median of three runs:
 
