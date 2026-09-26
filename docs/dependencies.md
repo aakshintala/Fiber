@@ -28,6 +28,8 @@ A crate is admitted when:
 - its licence is on the allowed list and it has no open advisory (see "Supply
   chain")
 - something Fiber has decided to build uses it
+- it is maintained: an advisory marking it unmaintained is the test, so
+  cargo-deny checks this with the rest
 - the pull request that adds it says what Fiber would otherwise have to write
 
 Fiber writes a thing itself when it is a small, fully specified format that
@@ -67,12 +69,14 @@ together.
   before it runs a line of code, and about 0.6 MiB of footprint.
 
 Each figure is the crate standalone. Crates that share dependencies cost less
-together than the sum of their rows, so the table also has a row for all
-runtime crates built together.
+together than the sum of their rows, so the table also has a row with all
+runtime crates linked into one binary. Its workloads run one after another,
+so that row is the peak of the busiest one on top of everything linked, not
+the cost of all of them holding memory at once.
 
 A new crate gets a workload in the probe and a row here, measured on Linux
 x86_64, Linux arm64 and macOS arm64. A crate is measured again when its major
-version changes. What a running session holds, broken down by Fiber's own
+version or its enabled features change. What a running session holds, broken down by Fiber's own
 crates, belongs to the memory budget.
 
 Dev-dependencies are compiled only into tests. They never reach the shipped
@@ -90,7 +94,7 @@ only that crate, in KiB; the empty program is 323 KiB.
 | Crate | Used for | Linux x86_64 | Linux arm64 | macOS arm64 | Crates | Binary |
 |---|---|---:|---:|---:|---:|---:|
 | serde, serde_json | the log, the event stream, every wire format | ~0 | ~0 | ~0 | 11 | 418 |
-| ureq, rustls-platform-verifier | HTTP over TLS, trusting the OS certificate store | 3,448 | 3,200 | 2,160 | 31 | 2,549 |
+| ureq, rustls-platform-verifier | HTTP over TLS, trusting the OS certificate store | 3,356 | 3,076 | 2,048 | 31 | 2,545 |
 | ratatui | drawing the terminal UI | 1,084 | 1,344 | 1,376 | 41 | 469 |
 | crossterm | terminal input, raw mode and output | ~0 | 256 | ~0 | 28 | 443 |
 | mlua | the extension runtime, Lua 5.4 vendored | 912 | 704 | ~0 | 23 | 785 |
@@ -100,12 +104,14 @@ only that crate, in KiB; the empty program is 323 KiB.
 | getrandom | random ids | ~0 | ~0 | ~0 | 3 | 325 |
 | ring | SHA-256, for PKCE and extension binary checksums | ~0 | ~0 | ~0 | 8 | 341 |
 | base64 | PKCE, and attachments sent to providers | ~0 | ~0 | ~0 | 1 | 328 |
-| rustix | the pseudo-terminal behind the shell tool's `tty` | ~0 | ~0 | ~0 | 4 | 330 |
-| all of the above together | | 4,980 | 4,540 | 3,216 | 117 | 3,816 |
+| rustix | the shell tool's pseudo-terminal, new session and process group | ~0 | ~0 | ~0 | 4 | 330 |
+| all of the above together | | 5,104 | 4,536 | 3,232 | 117 | 3,819 |
 
 Notes:
 
-- ureq's figure is one live HTTPS request to example.com. ring, which rustls
+- ureq's figure is one live HTTPS request to example.com, through the OS
+  trust store and the custom connector that keeps the socket for
+  cancellation (`docs/architecture.md`, "Cancellation"). ring, which rustls
   uses for cryptography, carries C and assembly. aws-lc-rs, the alternative
   provider, adds 6 crates and 663 KiB for nothing Fiber needs.
 - mlua carries Lua's C source.
@@ -124,7 +130,9 @@ rustls-platform-verifier, so a certificate installed by a company that
 inspects TLS works as it does in curl or a browser. On Linux the verifier reads
 only the system store. When that store is empty, as in a minimal container
 without `ca-certificates`, Fiber falls back to Mozilla's root list, which is
-compiled in through ureq.
+compiled in through ureq. Empty means the platform's certificate loader
+returned no certificates. A test runs Fiber against an empty store and checks
+it connects through the fallback.
 
 ## Waiting on other decisions
 
@@ -158,13 +166,17 @@ yaml-rust and bincode.
 | BM25 for `tool_search` | one scoring formula over a few hundred short documents |
 | Comparing extension version tags | a `v1.4.0` tag is three numbers compared in order |
 | The OAuth callback listener | one request on a `std::net::TcpListener` |
+| Percent-encoding OAuth URLs and parsing the callback query | a fixed format from RFC 3986, a few dozen lines |
 | File locking | `std::fs::File::lock`, stable since Rust 1.89 |
 | Timestamps | the log's `ts` is milliseconds since the epoch, from `std::time` |
 
 Tool arguments are checked against a subset of JSON Schema: `type`,
 `properties`, `required`, `additionalProperties`, `enum`, `items`, `minimum`,
-`maximum`, `minLength` and `anyOf`. A keyword outside the subset is skipped,
-not failed, so an MCP server whose schema uses one still works. The jsonschema
+`maximum`, `minLength` and `anyOf`. A built-in tool's schema uses only the
+subset, and a test fails if one does not. In an extension's or an MCP
+server's schema, a keyword outside the subset is skipped, not failed, so a
+server whose schema uses one still works. Checking those schemas is best
+effort. The jsonschema
 crate covers the whole specification, but it costs 14,808 KiB on Linux x86_64
 and brings 79 crates, more than every runtime crate together.
 
