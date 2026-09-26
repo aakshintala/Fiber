@@ -120,8 +120,8 @@ function that crosses a crate boundary returns that enum, never a
 type-erased error such as `Box<dyn Error>`. A bounded set of failures is
 named case by case rather than widened into one catch-all case.
 
-Stable error codes for headless callers are not settled here; they are the
-map's "Error taxonomy".
+The crate that defines an enum maps each case to a stable code, with no
+wildcard arm. The codes and the mapping rule are `docs/errors.md`.
 
 ## `unsafe`
 

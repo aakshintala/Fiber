@@ -144,6 +144,10 @@ A person can override where a key comes from in configuration
 A stored credential owns its provider. If it fails, Fiber reports the failure.
 It does not fall back to an environment variable.
 
+Fiber looks for the session model's credential at startup, before the session
+starts. A run with none fails there with `credential_missing`
+(`docs/errors.md`, "Before a session exists").
+
 OAuth flows are native, like protocols. An extension chooses a flow and
 supplies its parameters, such as the client id and endpoints. ChatGPT/codex
 uses one. The other four providers Fiber ships use keys.
@@ -155,13 +159,14 @@ stored credential stays in place, and the call fails with an auth error. Logging
 in again is the fix.
 
 A headless run whose credential has expired and cannot be refreshed fails with
-a stable auth error code. It never prompts, because nobody is there to answer.
+`authentication_failed`. It never prompts, because nobody is there to answer.
 
 ## When a model call fails
 
 A failed model call is recorded as `docs/events.md` describes: an assistant
-message that completed with a failed outcome, a cause and an attempt number. A
-retry is a new action.
+message that completed with a failed outcome, an `error` and an attempt number.
+A retry is a new action. Which failure gets which code, and which codes are
+retried, is `docs/errors.md`, "A failed model call".
 
 Fiber retries these failures:
 

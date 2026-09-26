@@ -102,7 +102,7 @@ answers with `reply` (`docs/mcp.md`, "Elicitation, sampling and roots").
 | Kind | Durable | Payload |
 |---|---|---|
 | `fiber_started` | yes | Fiber version, `schema_version`, new session or resumed |
-| `fiber_exited` | yes | exit code, the final message's `action_id` and its text, `error` if it failed, `suspended_on` naming the `request_id` when the process exited on a pending approval (`docs/invocation.md`, "Lifecycle") |
+| `fiber_exited` | yes | exit code, the final message's `action_id` and its text, `error` if it failed (`docs/errors.md`, "What a caller gets"), `suspended_on` naming the `request_id` when the process exited on a pending approval (`docs/invocation.md`, "Lifecycle") |
 
 A process is not a named unit in the glossary; these two lines record its
 boundary without inventing one. They are durable for one reason: a
@@ -136,7 +136,7 @@ as soon as a delegate relays its own messages onto the same stdout.
 | `session_started` | yes | creation time, workspace root; optional `parent { session_id, delegate_id }` for a delegate and `forked_from { session_id, seq }` for a fork or a rewind (`docs/delegates.md`, "Forks"; "Rewind" below); for a rewind, `rewind { summary?, note, jobs }` |
 | `rewound` | yes | the new session's `session_id`, the `seq` of the point, and the `job_id`s handed to the new session (`jobs`); the last line of a session that was rewound ("Rewind" below) |
 | `turn_started` | yes | the input that started it; for a turn started by jobs, a source naming those `job_id`s |
-| `turn_completed` | yes | `outcome` (`completed`, `interrupted`, `failed`), `error` on failure |
+| `turn_completed` | yes | `outcome` (`completed`, `interrupted`, `failed`), `error` on failure (`docs/errors.md`, "What ends a turn") |
 | `steering_applied` | yes | the text a running turn received at a step boundary, and where it came from |
 | `context_added` | yes | the text a hook added to the conversation, the extension's name and the hook point (`docs/extensions.md`, "Hooks") |
 
@@ -175,7 +175,8 @@ durable.
 - `tool_call_completed` — outcome.
 
 A failed model call is an assistant message that completed with a failed
-outcome, a cause and an attempt number; the retry is a new action. There is no
+outcome, an `error` and an attempt number; the retry is a new action. Its codes
+are `docs/errors.md`, "A failed model call". There is no
 separate error channel, so no failure is ever reported twice.
 
 `tool_call_completed` carries:
@@ -193,6 +194,7 @@ separate error channel, so no failure is ever reported twice.
 
 An unknown `error.code` is a generic failure and an unknown `reason` is a
 generic denial; the consumer shows the message. Adding either value is additive.
+Every error code is listed in `docs/errors.md`.
 
 A line whose content a hook changed carries `changed_by`, the names of the
 extensions that changed it, in the order they ran. It appears on
