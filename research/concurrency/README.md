@@ -110,7 +110,7 @@ Closing the stashed socket unblocks the read over TLS on every platform. Each re
 
 ### musl against glibc
 
-musl is slower wherever a program allocates a lot of memory, and uses less RSS. The ureq cancel is 1.4 to 1.8 times slower on musl. The Lua hook conversion (`research/hook-conversion-cost/linux/`) is 11% to 48% slower on musl, depending on the row. musl uses less than half glibc's RSS for parked threads, and 0.4 to 1.3 MiB less peak RSS in the `mini_*` programs. No measured slowdown reaches a millisecond on a per-event path.
+musl is slower wherever a program allocates a lot of memory, and uses less RSS. The ureq cancel is 1.4 to 1.8 times slower on musl. The Lua hook conversion (`research/hook-conversion-cost/linux/`) is 11% to 48% slower on musl, depending on the row. musl uses less than half glibc's RSS for parked threads, and 0.4 to 1.3 MiB less peak RSS in the `mini_*` programs. The largest slowdown measured is 3 ms, on a 1000-message model request passed through a Lua hook.
 
 ### Replacing musl's allocator
 
