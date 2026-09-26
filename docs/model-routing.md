@@ -13,7 +13,7 @@ A protocol is a wire format: how a request is shaped, and how a streamed reply
 is parsed into actions. A provider is an endpoint that speaks one or more
 protocols: a name, a credential, base URLs and a list of models.
 
-Protocols are native Rust in the `provider` module. v0.0.1 has five:
+Protocols are native Rust in the `provider` module. There are five:
 
 | Protocol | Used by |
 |---|---|
@@ -26,7 +26,7 @@ Protocols are native Rust in the `provider` module. v0.0.1 has five:
 An extension cannot add a protocol. A vendor with a new wire format needs a
 Fiber release.
 
-Every provider is an extension, the five v0.0.1 ships included: OpenCode,
+Every provider is an extension, the five Fiber ships included: OpenCode,
 ChatGPT/codex, muse (the Meta Model API), OpenRouter and Databricks. Extensions
 are fetched and installed, not built into the binary. Installing Fiber
 installs these five. How extensions arrive and stay current is
@@ -146,7 +146,7 @@ It does not fall back to an environment variable.
 
 OAuth flows are native, like protocols. An extension chooses a flow and
 supplies its parameters, such as the client id and endpoints. ChatGPT/codex
-uses one. The other four providers v0.0.1 ships use keys.
+uses one. The other four providers Fiber ships use keys.
 
 Fiber refreshes an OAuth token when it is within 5 minutes of expiry. The
 refresh takes a lock on the credential file, re-reads it, and refreshes once,
