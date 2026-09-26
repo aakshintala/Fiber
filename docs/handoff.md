@@ -27,7 +27,7 @@ is new.
 Before each request, Fiber checks how full the model's context is. A handoff
 runs when the context reaches whichever comes first:
 
-- T tokens, 300,000 by default
+- T tokens, 400,000 by default
 - f times the model's context window, with f 0.7 by default
 
 Both are set in configuration, globally and per model (`docs/configuration.md`).
@@ -48,7 +48,7 @@ below does not apply. A person and a tool can still start a handoff.
 ### The nudge
 
 Once per context, when the context reaches two thirds of the automatic trigger
-(200,000 tokens with the defaults), Fiber appends one line to the model's
+(about 267,000 tokens with the defaults), Fiber appends one line to the model's
 context. It says:
 
 - how full the context is
@@ -226,14 +226,14 @@ Every handoff makes the next request miss the prompt cache after the system
 prompt and tools. On token cost alone, handing off earlier is still cheaper,
 down to a floor where a fresh context is already near the trigger
 ([research/compaction/cost.md](../research/compaction/cost.md)). Replayed over
-the owner's sessions, handing off at 300,000 tokens costs 0.68 to 0.88 of never
+the owner's sessions, handing off at 400,000 tokens costs 0.75 to 0.92 of never
 handing off on Opus 5.5, and a handoff at 150,000 to 400,000 tokens repays its
 cost within 2 to 12 steps where sessions ran a median of 42 or more further
 steps.
 
 Cost therefore cannot choose T; quality does. The owner's experience is that
-current models with 1 million token windows decay around 400,000 tokens. 300,000
-sits between that and the cost curve. The default f of 0.7 keeps the trigger
+current models with 1 million token windows decay around 400,000 tokens, and
+the owner ruled that point the default. The default f of 0.7 keeps the trigger
 clear of a smaller window's limit, with room for a large final step, and the
 cost model supports handing off at that point too.
 

@@ -95,7 +95,7 @@ set the key.
 | `reviewer.block_limits.consecutive` | 3 | no | Consecutive blocks before a person is asked. |
 | `reviewer.block_limits.session` | 20 | no | Blocks in a session before a person is asked. |
 | `handoff.enabled` | true | yes | Whether automatic handoff runs (`docs/handoff.md`). |
-| `handoff.tokens` | 300000 | yes | The token trigger. |
+| `handoff.tokens` | 400000 | yes | The token trigger. |
 | `handoff.window_fraction` | 0.7 | yes | The trigger as a fraction of the model's context window. |
 | `handoff.nudge` | true | yes | Whether the nudge is given. |
 | `cache.lifetime` | `"1h"` | yes | The prompt-cache lifetime, `"5m"` or `"1h"` (`docs/prompt-cache.md`). |
@@ -123,7 +123,7 @@ and win over the same key at the top level of the same layer:
 
 ```json
 {
-  "handoff": { "tokens": 300000 },
+  "handoff": { "tokens": 400000 },
   "models": {
     "databricks/databricks-claude-opus-5": {
       "handoff": { "window_fraction": 0.5 },
