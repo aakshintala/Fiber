@@ -8,7 +8,7 @@ that ticket's resolution holds the rationale and the rejected alternatives.
 
 The crates are `docs/architecture.md`. Threads rather than an async runtime is
 [ADR 0004](adr/0004-blocking-threads-no-async-runtime.md). Which CI jobs run
-where is [CI](https://github.com/aakshintala/fiber/issues/62). What Fiber
+where is `docs/ci.md`. What Fiber
 promises about memory is
 `docs/performance.md`.
 
@@ -216,7 +216,9 @@ dependency.
 - Every release ships a notices file with the licence text and copyright
   notice of every crate compiled into the binary. cargo-about generates it
   from `Cargo.lock`, and CI fails if it cannot.
-- An advisory fails the build, including one that marks a crate unmaintained.
+- An advisory fails a pull request that changes `Cargo.lock`, the daily
+  advisory run and a release (`docs/ci.md`), including one that marks a crate
+  unmaintained.
   An exception names the advisory, the path that pulls the crate in and the
   condition for removing the exception, as codex's `deny.toml` does.
 

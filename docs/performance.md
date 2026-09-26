@@ -6,7 +6,7 @@ exceeded. This is what is true now, not a plan. It is settled by
 that ticket's resolution holds the rationale and the rejected alternatives.
 
 Which CI job runs the gate, and on which runner, is
-[CI](https://github.com/aakshintala/fiber/issues/62). How memory is measured
+`docs/ci.md`. How memory is measured
 is `docs/dependencies.md`, "Measuring memory".
 
 ## What a budget covers
