@@ -142,8 +142,10 @@ as soon as a delegate relays its own messages onto the same stdout.
 
 A **steering message** — input sent while a turn is running — joins that turn
 at its next step boundary, and `steering_applied` is how the log shows what
-the turn actually received. A message the turn ends before applying becomes
-the next turn's input, so it appears on the next `turn_started` instead. The
+the turn actually received. The loop drains its inbox once more before a turn
+completes (`docs/loop.md`, "Ending a turn"), so only a message that arrives
+after that becomes the next turn's input, and it appears on the next
+`turn_started` instead. The
 threading this rests on is the concurrency section of `docs/architecture.md`;
 the driver commands that send, amend and withdraw one — `steer`, `steer_amend`
 and `steer_drop` — are `docs/invocation.md`.

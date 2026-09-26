@@ -48,7 +48,7 @@ in this contract, as an ephemeral event where it is display-only."
 |---|---|
 | `contract` | The vocabulary every other module speaks: what an event looks like, what a command looks like, and what a tool, a provider and a hook must each be able to do. It contains no behaviour at all. |
 | `log` | Owns the session directory. The only thing that opens `events.jsonl`, holds the lock, mints `seq` and decides fsync order. Also hands events to whoever is watching. |
-| `loop` | Runs turns and steps. The only thing that decides what happens next. |
+| `loop` | Runs turns and steps (`docs/loop.md`). The only thing that decides what happens next. |
 | `provider` | Talks to model APIs: wire formats, credentials, streaming. Reached only through the provider seam. |
 | `tools` | Runs tool calls: shell, file edits, search. Reached only through the tool seam. |
 | `extensions` | Loads extension code, hosts the runtime, and wires what extensions register into the three seams. |
