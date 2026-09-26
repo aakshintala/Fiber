@@ -55,7 +55,7 @@ about 7 MiB more per delegate, or about 56 MiB at the owner's measured peak of
 - The Fiber harness has the same shape as every other harness: a child
   process with a prompt in and an event stream out.
 - Stopping a delegate is a signal to its process group, which always works.
-  A crash in C code (Lua, SQLite), an out-of-memory kill or a panic ends one
+  A crash in C code (Lua, ring), an out-of-memory kill or a panic ends one
   delegate and nothing else.
 - `fiber upgrade` can restart `fiber remote` without stopping any session.
   A running session keeps its binary until it exits.

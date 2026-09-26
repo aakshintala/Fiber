@@ -197,7 +197,7 @@ The `job_*` kinds are unchanged. A delegate adds two kinds keyed by `job_id`, as
   (`docs/invocation.md`, "Lifecycle"). The parent's log marks each job
   `orphaned` on resume (`docs/tools.md`, "Background jobs"), because the
   parent cannot know.
-- A crash of any kind in a delegate, in Rust, Lua or SQLite, ends that
+- A crash of any kind in a delegate, in Rust or in Lua's C code, ends that
   delegate `failed` and nothing else.
 
 ## Worktrees
