@@ -8,8 +8,7 @@ that ticket's resolution holds the rationale and the rejected alternatives.
 It covers Fiber's own code. An extension's Lua or a process extension's
 program is its author's. How tests are written is `docs/testing.md`, which
 crates may be used is `docs/dependencies.md`, and who implements and reviews
-a change is
-[Implementation workflow](https://github.com/aakshintala/fiber/issues/66).
+a change is `docs/workflow.md`.
 
 ## Tools enforce the rules
 

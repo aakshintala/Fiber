@@ -1,0 +1,112 @@
+# Implementation workflow
+
+How a ticket becomes a merged pull request. This is what is true now, not a
+plan. It is settled by
+[Implementation workflow: how a ticket becomes a merged PR](https://github.com/aakshintala/fiber/issues/66);
+that ticket's resolution holds the rationale and the rejected alternatives.
+
+It starts from an agent-ready ticket: one that states its outcome and cites
+the `docs/<area>.md` pages it implements. Turning a design into tickets is
+not part of it. What must pass to merge is set in `docs/ci.md`,
+`docs/testing.md`, `docs/code-quality.md` and `docs/dependencies.md`.
+
+No harness is assumed. Any agent harness can fill any role below.
+
+## Roles
+
+- The orchestrator owns a ticket from start to merge. It writes the brief,
+  runs the gate, opens the pull request, answers the review and merges.
+- An implementer writes the code. It may be the orchestrator's own session
+  or a separate one the orchestrator briefs; that is the harness's choice.
+- The reviewer reads the finished diff, read-only, and reports findings.
+
+The owner reads no code. A pull request merges on a green `CI` check and a
+resolved review, and the orchestrator merges it without asking.
+
+## Choosing models
+
+An implementer is chosen for the capability its ticket needs: a mechanical
+edit does not need the model a subtle concurrency change does.
+
+The reviewer is from a different model family than the implementer, so the
+two do not share blind spots.
+
+## The brief
+
+An implementer is given:
+
+- the ticket
+- the `docs/<area>.md` pages the ticket cites
+- `CONTEXT.md`
+- the gate command, `scripts/check`
+
+`AGENTS.md` at the repository root points every harness at these files.
+
+## The gate
+
+`scripts/check` must pass before a pull request opens, whoever wrote the
+code. No change is too small for it.
+
+It runs, for the crates the diff touches and every crate that depends on
+them, what CI's per-platform job runs: `cargo fmt --check`, clippy with the
+workspace lints, the tests under nextest, and doc-tests. It also runs the
+cheap Linux x86_64 checks from `docs/ci.md`: the 800-line file cap, the
+`unsafe` table and the dependency list. CI runs the same script, the
+platform-independent checks on Linux x86_64 only, so the gate and CI cannot
+drift.
+
+Mutation testing runs in CI only.
+
+No one drives the binary by hand to declare work done. A behaviour the tests
+do not reach gets a test: a binary-level test for the JSON lines, a screen
+test for what the terminal shows (`docs/testing.md`).
+
+## Size
+
+A pull request carries one ticket. There is no cap on changed lines.
+
+A ticket too large for one implementer session is split by the orchestrator
+into pull requests that each leave `main` green. The ticket closes with the
+last one.
+
+## The pull request
+
+The body says `Resolves #<ticket>`.
+
+When the ticket carries the `bug` label, CI runs the pull request's new and
+changed tests against the base commit, and at least one must fail there
+(`docs/testing.md`, "Proving a test bites").
+
+The orchestrator waits on `CI` with `gh-ci`. A failed check is fixed in a new
+commit. A failed run is never re-run until it passes; the one exception is
+CI's own retry of a binary-level test (`docs/testing.md`, "Flaky tests").
+
+## Review
+
+Every pull request gets one review, after the gate passes. The reviewer is
+given the diff, the ticket, the docs it cites, `CONTEXT.md` and
+`docs/code-quality.md`, and checks two things:
+
+- Spec: the diff does what the ticket and its `docs/<area>.md` pages say.
+- Standards: the items in `docs/code-quality.md`, "What a reviewer checks".
+
+The review is posted on the pull request as a comment. Each finding is
+either fixed, and the fix's diff reviewed again, or answered in a reply that
+cites evidence: a test, a doc line, a command's output. The pull request
+merges when every finding has one or the other.
+
+## When a doc is wrong
+
+The doc wins, and the code changes to match it. When implementing shows that
+a doc cannot be met as written, the implementer stops. The orchestrator
+files an issue labelled `needs-owner` that quotes the doc and gives the
+evidence, and the ticket waits for the owner's ruling.
+
+A code pull request may correct a doc's wording, such as a misnamed type or a
+broken link, but never changes what the doc decides.
+
+## Merging
+
+When `CI` is green and every review finding is resolved, the orchestrator
+squash-merges the pull request, deletes its branch and checks the ticket
+closed.
