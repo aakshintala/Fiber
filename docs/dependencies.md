@@ -21,12 +21,14 @@ same pull request.
 
 A crate is admitted when:
 
-- its memory cost is measured and recorded here (see "Measuring memory")
+- its memory cost and the crates it adds are measured and recorded here (see
+  "Measuring memory")
 - it does not need an async runtime, which ADR 0004 rules out; rmcp, reqwest
   and sqlx fail on this alone
 - its licence is on the allowed list and it has no open advisory (see "Supply
   chain")
-- writing the same thing ourselves would cost more than the crate
+- something Fiber has decided to build uses it
+- the pull request that adds it says what Fiber would otherwise have to write
 
 Fiber writes a thing itself when it is a small, fully specified format that
 Fiber owns end to end, such as server-sent events or JSON-RPC. It also writes
@@ -35,61 +37,78 @@ one when the only crates for it fail the rules above.
 Transitive crates are not listed. Each one's memory is counted in the direct
 crate that pulls it in, and cargo-deny checks its licence and advisories.
 
-Binary size is recorded, not gated per crate. The whole binary stays under 20
-MiB. Compile time is not a criterion: CI caches built dependencies, and every
-crate on this page together builds from clean in 16 seconds on macOS arm64.
+`unsafe` Rust in a dependency is not counted or gated. The runtime table
+records which crates carry C or assembly, because a crash there ends the
+whole process, which
+[ADR 0009](adr/0009-each-session-is-one-process.md) accepts. Rules for
+Fiber's own `unsafe` code belong to
+[Code quality](https://github.com/aakshintala/fiber/issues/64).
+
+Binary size is recorded, not gated per crate. CI fails a stripped release
+binary over 20 MiB. Compile time is not a criterion: CI caches built
+dependencies. On macOS arm64, serde, ureq, ratatui, rusqlite and mlua build from clean in 8
+seconds, and adding ten candidates, syntect among them, takes it to 16.
 
 ## Measuring memory
 
 `research/dependency-rss` measures each crate alone. A small program runs a
 fixed workload shaped like Fiber's use of the crate, such as one HTTPS request
-for ureq or 100 inserts in WAL mode for rusqlite. `run.sh` builds one binary
-per crate and reports the median of 5 runs, minus a program that does nothing.
+through the OS trust store for ureq, or raw mode on a pseudo-terminal for
+crossterm. `run.sh` builds one binary per crate and reports the median of 5
+runs, minus a program that does nothing. It also builds every runtime crate
+together.
 
-- Linux reports peak RSS.
+- Linux reports peak RSS. It counts the pages of the binary's own code that
+  ran. That is why rusqlite, whose SQLite code is 1.7 MiB, costs about 2 MiB
+  on Linux.
 - macOS reports peak memory footprint, the figure Activity Monitor shows.
   macOS RSS also counts system framework pages shared with every other
   process. A crate that links `Security.framework` shows about 4.5 MiB of RSS
   before it runs a line of code, and about 0.6 MiB of footprint.
 
+Each figure is the crate standalone. Crates that share dependencies cost less
+together than the sum of their rows, so the table also has a row for all
+runtime crates built together.
+
 A new crate gets a workload in the probe and a row here, measured on Linux
-x86_64 and macOS arm64. A crate is measured again when its major version
-changes. The numbers are the cost of admitting a crate. What a running session
-holds, broken down by Fiber's own crates, belongs to the memory budget.
+x86_64, Linux arm64 and macOS arm64. A crate is measured again when its major
+version changes. What a running session holds, broken down by Fiber's own
+crates, belongs to the memory budget.
+
+Dev-dependencies are compiled only into tests. They never reach the shipped
+binary, so they have no memory row.
 
 ## Runtime dependencies
 
-Memory is over a program that does nothing, in KiB, measured on
-September 25, 2026 with rustc 1.98.1. Linux figures are GitHub's
-`ubuntu-24.04` and `ubuntu-24.04-arm` runners; macOS is an Apple M3 Pro.
-Differences under 100 KiB are run-to-run noise and show as ~0. Binary is the
-stripped macOS release binary with only that crate, in KiB; the empty program
-is 330 KiB.
+Measured on September 25, 2026 with rustc 1.98.1. Linux is GitHub's
+`ubuntu-24.04` and `ubuntu-24.04-arm` runners, and macOS is an Apple M3 Pro.
+Memory is in KiB over a program that does nothing. Differences under 200 KiB
+are run-to-run noise and show as ~0. Crates is the number of crates in the
+crate's own tree. Binary is the stripped Linux x86_64 release binary with
+only that crate, in KiB; the empty program is 323 KiB.
 
-Linux RSS counts the pages of the binary's own code that ran, and macOS
-footprint does not. That is why rusqlite, whose SQLite code is 1.7 MiB, costs
-about 2 MiB on Linux and 144 KiB on macOS.
-
-| Crate | Used for | Linux x86_64 | Linux arm64 | macOS arm64 | Binary |
-|---|---|---:|---:|---:|---:|
-| serde, serde_json | the log, the event stream, every wire format | 200 | 204 | 128 | 414 |
-| ureq | HTTP, behind a connector that keeps the socket | 2,872 | 2,576 | 1616 | 2147 |
-| rustls-platform-verifier | trusting the operating system's root certificates | in ureq | in ureq | in ureq | in ureq |
-| ratatui, crossterm | the terminal UI and terminal input | 1,384 | 1,488 | 1616 | 479 |
-| rusqlite | the session index, with SQLite bundled | 2,184 | 1,932 | 144 | 2022 |
-| mlua | the extension runtime, Lua 5.4 vendored | 964 | 716 | 96 | 703 |
-| clap | the command line | 568 | 460 | 96 | 725 |
-| thiserror | error types in library crates | ~0 | ~0 | 0 | 331 |
-| signal-hook | SIGTERM, SIGINT and SIGHUP | ~0 | ~0 | 0 | 348 |
-| getrandom | random ids | ~0 | ~0 | 16 | 331 |
-| ring | SHA-256, for PKCE and extension binary checksums | 124 | ~0 | 16 | 331 |
-| base64 | PKCE, and attachments sent to providers | ~0 | ~0 | 16 | 331 |
-| rustix | the pseudo-terminal behind the shell tool's `tty` | ~0 | ~0 | 0 | 331 |
+| Crate | Used for | Linux x86_64 | Linux arm64 | macOS arm64 | Crates | Binary |
+|---|---|---:|---:|---:|---:|---:|
+| serde, serde_json | the log, the event stream, every wire format | ~0 | ~0 | ~0 | 11 | 418 |
+| ureq, rustls-platform-verifier | HTTP over TLS, trusting the OS certificate store | 3,448 | 3,200 | 2,160 | 31 | 2,549 |
+| ratatui | drawing the terminal UI | 1,084 | 1,344 | 1,376 | 41 | 469 |
+| crossterm | terminal input, raw mode and output | ~0 | 256 | ~0 | 28 | 443 |
+| mlua | the extension runtime, Lua 5.4 vendored | 912 | 704 | ~0 | 23 | 785 |
+| clap | the command line | 452 | 448 | ~0 | 17 | 782 |
+| thiserror | error types in library crates | ~0 | ~0 | ~0 | 6 | 325 |
+| signal-hook | SIGTERM, SIGINT and SIGHUP | ~0 | ~0 | ~0 | 4 | 352 |
+| getrandom | random ids | ~0 | ~0 | ~0 | 3 | 325 |
+| ring | SHA-256, for PKCE and extension binary checksums | ~0 | ~0 | ~0 | 8 | 341 |
+| base64 | PKCE, and attachments sent to providers | ~0 | ~0 | ~0 | 1 | 328 |
+| rustix | the pseudo-terminal behind the shell tool's `tty` | ~0 | ~0 | ~0 | 4 | 330 |
+| all of the above together | | 4,980 | 4,540 | 3,216 | 117 | 3,816 |
 
 Notes:
 
-- ureq's figure is one live HTTPS request to example.com, loading the
-  operating system's trust store included.
+- ureq's figure is one live HTTPS request to example.com. ring, which rustls
+  uses for cryptography, carries C and assembly. aws-lc-rs, the alternative
+  provider, adds 6 crates and 663 KiB for nothing Fiber needs.
+- mlua carries Lua's C source.
 - ratatui's figure is its two 200 by 50 screen buffers. Any full-screen
   terminal UI holds a screen model of that size.
 - thiserror, signal-hook, getrandom, ring and rustix are already in the tree
@@ -97,8 +116,6 @@ Notes:
   adds no crate.
 - serde_json's `preserve_order` feature is never enabled
   (`docs/prompt-cache.md`).
-- TLS uses ring as rustls's crypto provider. aws-lc-rs adds 6 crates and 663
-  KiB for nothing Fiber needs.
 
 ### Root certificates
 
@@ -114,19 +131,21 @@ compiled in through ureq.
 These crates are the choice if the named decision needs one. Each is measured
 already.
 
-| Crate | Needed if | Linux x86_64 | Linux arm64 | macOS arm64 | Binary |
-|---|---|---:|---:|---:|---:|
-| regex, ignore | [Search: built-in tools or the shell?](https://github.com/aakshintala/fiber/issues/54) keeps search built in | 1,804 / 1,424 | 1,612 / 1,232 | 1088 / 528 | 1660 / 1523 |
-| similar | [File tools: read, write and edit](https://github.com/aakshintala/fiber/issues/52) shows a diff | 128 | 264 | 80 | 414 |
-| pulldown-cmark | the terminal UI renders markdown ([Epic: TUI](https://github.com/aakshintala/fiber/issues/82)) | 468 | 272 | 144 | 593 |
+| Crate | Needed if | Linux x86_64 | Linux arm64 | macOS arm64 | Crates | Binary |
+|---|---|---:|---:|---:|---:|---:|
+| rusqlite, SQLite bundled | Fiber keeps a derived database, such as for cross-session search; today listing sessions reads the logs (`docs/state.md`) | 2,236 | 1,984 | ~0 | 14 | 2,268 |
+| regex, ignore | [Search: built-in tools or the shell?](https://github.com/aakshintala/fiber/issues/54) keeps search built in | 1,720 / 1,380 | 1,724 / 1,344 | 1,088 / 560 | 5 / 13 | 2,055 / 1,752 |
+| similar | [File tools: read, write and edit](https://github.com/aakshintala/fiber/issues/52) shows a diff | ~0 | 380 | ~0 | 1 | 389 |
+| pulldown-cmark | the terminal UI renders markdown ([Epic: TUI](https://github.com/aakshintala/fiber/issues/82)) | 428 | 384 | ~0 | 4 | 724 |
 
-regex and ignore share one regex engine, so both together add 1,692 KiB of
-binary, not 3,183. About 440 KiB of regex is Unicode tables.
+rusqlite carries SQLite's C source. regex and ignore share one regex engine,
+so both together add less than the sum of their rows. About 440 KiB of
+regex's binary is Unicode tables.
 
 Syntax highlighting is the terminal UI's decision. The obvious crate, syntect,
-costs 8,748 KiB on Linux x86_64 and 8,400 KiB of footprint on macOS just
-to load its syntax definitions. It adds 26 crates, and cargo-deny fails it out
-of the box on two unmaintained crates, yaml-rust and bincode.
+costs 8,704 KiB on Linux x86_64 just to load its syntax definitions. It has 44
+crates, and cargo-deny fails it out of the box on two unmaintained crates,
+yaml-rust and bincode.
 
 ## Written ourselves
 
@@ -134,18 +153,33 @@ of the box on two unmaintained crates, yaml-rust and bincode.
 |---|---|
 | Server-sent events parsing | a line protocol of a few dozen lines |
 | MCP's JSON-RPC and both transports | rmcp needs tokio |
+| Checking tool arguments against their input schema | see below |
+| The shell tool's command recogniser | it must fail closed, not parse all of shell |
 | BM25 for `tool_search` | one scoring formula over a few hundred short documents |
+| Comparing extension version tags | a `v1.4.0` tag is three numbers compared in order |
 | The OAuth callback listener | one request on a `std::net::TcpListener` |
 | File locking | `std::fs::File::lock`, stable since Rust 1.89 |
 | Timestamps | the log's `ts` is milliseconds since the epoch, from `std::time` |
+
+Tool arguments are checked against a subset of JSON Schema: `type`,
+`properties`, `required`, `additionalProperties`, `enum`, `items`, `minimum`,
+`maximum`, `minLength` and `anyOf`. A keyword outside the subset is skipped,
+not failed, so an MCP server whose schema uses one still works. The jsonschema
+crate covers the whole specification, but it costs 14,808 KiB on Linux x86_64
+and brings 79 crates, more than every runtime crate together.
+
+The shell tool's recogniser splits a command on `&&`, `||`, `;` and `|` and
+reads each part as plain words. Anything it cannot read plainly makes the
+call declare `executes`, as `docs/tools.md` requires. codex parses shell with
+tree-sitter-bash; a recogniser that fails closed does not need a full parser.
 
 Fiber uses the system allocator. Whether another allocator lowers resident
 memory is for the memory budget to measure.
 
 ## Tests and development tools
 
-Dev-dependencies are compiled only into tests, so they have no memory row.
-They are listed here and CI checks them like any other.
+Dev-dependencies are listed here, and CI checks them like any other
+dependency.
 
 | Crate or tool | Kind | Used for |
 |---|---|---|
