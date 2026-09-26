@@ -43,8 +43,7 @@ crate that pulls it in, and cargo-deny checks its licence and advisories.
 records which crates carry C or assembly, because a crash there ends the
 whole process, which
 [ADR 0009](adr/0009-each-session-is-one-process.md) accepts. Rules for
-Fiber's own `unsafe` code belong to
-[Code quality](https://github.com/aakshintala/fiber/issues/64).
+Fiber's own `unsafe` code are `docs/code-quality.md`.
 
 Binary size is recorded, not gated per crate. CI fails a stripped release
 binary over 20 MiB. Compile time is not a criterion: CI caches built
