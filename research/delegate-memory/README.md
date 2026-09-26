@@ -296,6 +296,20 @@ servers the owner runs every day through Claude Code and pi:
 - Linux arm64: 172,054 KB (168.0 MiB) PSS for the first set, and 80,752 KB
   (78.9 MiB) anonymous for each further set
 
+#### Remeasured on 2026-09-26
+
+The owner's daily set changed after the rows above were measured. quotabar
+now runs as a Claude Code hook with no process of its own. cursor-delegate is
+a Rust binary (`aakshintala/cursor-delegate` at 3ad0683, 736 KB). Three
+running instances, each serving a live session, measured with `footprint` on
+macOS arm64: 1,200 to 1,264 KB footprint and 1,120 KB RSS each. Linux was not
+measured.
+
+The daily set is therefore one server of about 1.2 MiB, against 102 MiB for
+the Node pair. With it, the "Processes, MCP in every process" formula below
+gives about 96 MiB for 8 delegates on macOS, where the Node pair gave
+1,003 MiB.
+
 ### Extensions in Lua
 
 The owner's pi-rig package (`aakshintala/pi-rig`, cloned read-only) has 18
