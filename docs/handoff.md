@@ -30,7 +30,7 @@ runs when the context reaches whichever comes first:
 - T tokens, 300,000 by default
 - f times the model's context window, with f 0.7 by default
 
-Both are set in configuration, globally and per model.
+Both are set in configuration, globally and per model (`docs/configuration.md`).
 
 Fiber asks the model for its note in the same session: it appends an
 instruction to the context, and the model's reply is the note. That request

@@ -82,7 +82,7 @@ by content.
 ## Bounded results
 
 - A tool that declares no cap is cut at 16 KiB of model-facing content.
-  Configuration can override any tool's cap. A tool may declare a larger or
+  Configuration can override any tool's cap (`docs/configuration.md`). A tool may declare a larger or
   smaller cap: the file tools and web fetch set their own in
   [File tools: read, write and edit](https://github.com/aakshintala/fiber/issues/52)
   and
@@ -440,7 +440,7 @@ its tools are deferred, change only when the preamble is built.
 ### What is deferred by default
 
 - Every tool declares whether it is deferred by default. Configuration can
-  override that for any tool, and an MCP server can be marked eager
+  override that for any tool (`docs/configuration.md`), and an MCP server can be marked eager
   (`docs/mcp.md`).
 - MCP tools and `mcp_resources` are deferred by default. Every other built-in
   is declared in full.

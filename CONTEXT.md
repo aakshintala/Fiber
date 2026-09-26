@@ -236,6 +236,12 @@ The one directory holding everything Fiber writes outside a repository,
 `~/.fiber` unless `FIBER_HOME` moves it.
 _Avoid_: state directory, configuration directory, config dir
 
+**Configuration layer**:
+One place a configuration value can come from. From lowest to highest: built-in
+defaults, global, repository, per project, per run. A higher layer wins key by
+key. See `docs/configuration.md`.
+_Avoid_: scope, profile, level
+
 **Project**:
 A git repository, identified by git's shared directory so its worktrees are one
 project and a separate clone is another; outside git, the launch directory.

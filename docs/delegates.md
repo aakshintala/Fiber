@@ -247,6 +247,5 @@ The `job_*` kinds are unchanged. A delegate adds two kinds keyed by `job_id`, as
   [Harness extensions: running another agent as a delegate](https://github.com/aakshintala/fiber/issues/77).
 - Messaging a session that was not started as a delegate:
   [Intercom: messaging a session you did not start](https://github.com/aakshintala/fiber/issues/78).
-- Where roles are configured: Configuration, on the map.
 - Showing and steering delegates in the terminal:
   [Epic: TUI](https://github.com/aakshintala/fiber/issues/82).

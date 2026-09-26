@@ -261,7 +261,7 @@ Each server has:
 - per-tool hint overrides
 - which tools are enabled and which are disabled
 
-The file format belongs to Configuration, which is not yet specified.
+The keys are `docs/configuration.md` ("MCP servers").
 
 ## Where servers run
 
@@ -288,4 +288,3 @@ shared between sessions.
 - Where a server's OAuth token is stored
 - How MCP content other than text and images, such as audio and resource
   links, reaches the model
-- The configuration file format: Configuration

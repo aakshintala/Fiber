@@ -118,10 +118,10 @@ the choice writes the config default. A headless run fails with the error code
 A one-shot review run gets a different model by passing `--model`. A role is a
 configured name for a delegate's model reference (`docs/delegates.md`). Roles
 name only the models delegates use; the session's own model is chosen in
-the order above. Where roles are configured is not settled here
-(Configuration).
+the order above. Roles are configured at `roles."<name>"`
+(`docs/configuration.md`).
 
-Project config may choose the default model from providers already installed.
+A repository's configuration may choose the default model from providers already installed.
 It cannot declare a provider or change a provider's base URL. If it could, a
 cloned repository could point `openrouter` at its own server, and Fiber would
 send it your OpenRouter key. A repository that needs a provider ships an
@@ -137,6 +137,9 @@ A key can come from:
 - an environment variable
 - a file
 - the output of a command, run once per process
+
+A person can override where a key comes from in configuration
+(`docs/configuration.md`, "Secrets"), never from a repository.
 
 A stored credential owns its provider. If it fails, Fiber reports the failure.
 It does not fall back to an environment variable.
